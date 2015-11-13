@@ -71,11 +71,7 @@ namespace Bell.PPS.Database.Shared
         {
             get
             {
-                object res = null;
-                lock(_scopeStore)
-                {
-                    res = CallContext.LogicalGetData(SLOT_KEY);
-                }
+                object res = CallContext.LogicalGetData(SLOT_KEY);
                 if (res != null)
                 {
                     Guid scopeID = (Guid)res;
@@ -91,37 +87,23 @@ namespace Bell.PPS.Database.Shared
             }
         }
 
-        private static void __setCurrentScope(DbConnectionScope value, bool isRemoveOld)
+        private static void __setCurrentScope(DbConnectionScope newScope, Guid? toRemoveID)
         {
-            lock (_scopeStore)
+            if (toRemoveID.HasValue)
             {
-                Guid? scopeID = null;
-                object res = null;
-                res = CallContext.LogicalGetData(SLOT_KEY);
-
-                if (res != null)
-                {
-                    //Get current scope
-                    scopeID = (Guid)res;
-                }
-
-                if (isRemoveOld && scopeID.HasValue)
-                {
-                    DbConnectionScope scope;
-                    _scopeStore.TryRemove(scopeID.Value, out scope);
-                    CallContext.LogicalSetData(SLOT_KEY, null);
-
-                }
-
-                if (value == null)
-                {
-                    return;
-                }
-
-                //REPLACE THE SLOT WITH THE NEW DATA
-                _scopeStore.AddOrUpdate(value.UNIQUE_ID, value, (key, old) => value);
-                CallContext.LogicalSetData(SLOT_KEY, value.UNIQUE_ID);
+                DbConnectionScope scope;
+                _scopeStore.TryRemove(toRemoveID.Value, out scope);
+                CallContext.LogicalSetData(SLOT_KEY, null);
             }
+
+            if (newScope == null)
+            {
+                return;
+            }
+
+            //REPLACE THE SLOT WITH THE NEW DATA
+            _scopeStore.AddOrUpdate(newScope.UNIQUE_ID, newScope, (key, old) => newScope);
+            CallContext.LogicalSetData(SLOT_KEY, newScope.UNIQUE_ID);
         }
 
         private static int __clearScopeGroup(Guid group_id)
@@ -196,11 +178,15 @@ namespace Bell.PPS.Database.Shared
                     //  __currentScope last, to make sure the thread static only holds validly set up objects
                     _priorScope = __currentScope;
                     if (_priorScope == null)
+                    {
                         this.GROUP_ID = Guid.NewGuid();
+                    }
                     else
+                    {
                         this.GROUP_ID = _priorScope.GROUP_ID;
+                    }
                     _isDisposed = false;
-                    __setCurrentScope(this, false);
+                    __setCurrentScope(this, null);
                 }
             }
         }
@@ -232,7 +218,7 @@ namespace Bell.PPS.Database.Shared
                         }
                         try
                         {
-                            __setCurrentScope(prior, true);
+                            __setCurrentScope(prior, this.UNIQUE_ID);
                         }
                         finally
                         {
