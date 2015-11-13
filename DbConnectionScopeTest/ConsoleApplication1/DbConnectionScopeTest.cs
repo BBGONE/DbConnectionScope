@@ -17,7 +17,7 @@ namespace ConsoleApplication1
             connectionString1 = connectionString;
 
             Console.WriteLine("Initial Thread: {0}", Thread.CurrentThread.ManagedThreadId);
-            await Task.Yield();
+            await Task.Delay(100).ConfigureAwait(false);
             Console.WriteLine("After Yield Thread: {0}", Thread.CurrentThread.ManagedThreadId);
 
             /*
@@ -35,14 +35,12 @@ namespace ConsoleApplication1
             using (DbConnectionScope scope = new DbConnectionScope(DbConnectionScopeOption.Required))
             {
                 Console.WriteLine("Starting On Thread: {0}", Thread.CurrentThread.ManagedThreadId);
-                await Task.Yield();
                 var conn1 = GetSqlConnection();
                 await Task.WhenAll(Enumerable.Range(1, 2).Select(async i =>
                 {
                     await FirstAsync(i, 100 * i);
                 }).ToArray());
-                var conn2 = GetSqlConnection();
-                await Task.Yield();
+                var conn2 = await GetSqlConnectionAsync();
                 Console.WriteLine("Ending On Thread: {0}, Test Passed: {1}", Thread.CurrentThread.ManagedThreadId, Object.ReferenceEquals(conn1, conn2));
                 Console.WriteLine("Before Scope End: DbConnectionScope.GetScopeStoreCount()== {0}, Groups: {1}",  DbConnectionScope.GetScopeStoreCount(), DbConnectionScope.GetScopeGroupsCount());
             }
@@ -55,26 +53,21 @@ namespace ConsoleApplication1
         {
             using (DbConnectionScope scope = new DbConnectionScope(DbConnectionScopeOption.Required))
             {
-                await Task.Yield();
                 await Task.Delay(300 * num).ConfigureAwait(false);
                 var conn = GetSqlConnection();
-                for (int i = 0; i < 1; i++)
+                await WaitAndWriteAsync(wait, conn, true).ConfigureAwait(false);
+
+                using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.RequiresNew, TransactionScopeAsyncFlowOption.Enabled))
+                using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.Required))
                 {
-                    await WaitAndWriteAsync(wait, conn, true);
+                    Task[] tasks = { WaitAndWriteAsync(wait, conn, true), WaitAndWriteAsync(wait, conn, true) };
+                    await Task.WhenAll(tasks).ConfigureAwait(false);
+                }
 
-                    using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.RequiresNew, TransactionScopeAsyncFlowOption.Enabled))
-                    //using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Suppress, TransactionScopeAsyncFlowOption.Enabled))
-                    using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.Required))
-                    {
-                        await WaitAndWriteAsync(wait, conn, true);
-                    } 
-
-                    using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.RequiresNew, TransactionScopeAsyncFlowOption.Enabled))
-                    //using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Suppress, TransactionScopeAsyncFlowOption.Enabled))
-                    using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.RequiresNew))
-                    {
-                        await WaitAndWriteAsync(wait, conn, false);
-                    }
+                using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.RequiresNew, TransactionScopeAsyncFlowOption.Enabled))
+                using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.RequiresNew))
+                {
+                    await WaitAndWriteAsync(wait, conn, false).ConfigureAwait(false);
                 }
             }
         }
@@ -95,10 +88,9 @@ namespace ConsoleApplication1
                 //Recursive CALL
                 await Task.Delay(waitAmount);
                 using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.RequiresNew, TransactionScopeAsyncFlowOption.Enabled))
-                //using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Suppress, TransactionScopeAsyncFlowOption.Enabled))
-                using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.Required))
+                using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.RequiresNew))
                 {
-                    await WaitAndWriteAsync(0, localConn, true);
+                    await WaitAndWriteAsync(0, localConn, false);
                 } 
             }
         }

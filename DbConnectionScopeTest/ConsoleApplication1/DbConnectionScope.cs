@@ -85,28 +85,15 @@ namespace Bell.PPS.Database.Shared
                 }
                 return null;
             }
-        }
-
-        private static void __setCurrentScope(DbConnectionScope newScope)
-        {
-            Guid? id = newScope == null ? (Guid?)null : newScope.UNIQUE_ID;
-            if (id.HasValue)
-                CallContext.LogicalSetData(SLOT_KEY, id);
-            else
-                CallContext.LogicalSetData(SLOT_KEY, null);
-        }
-
-        private static int __clearScopeGroup(Guid group_id)
-        {
-            int cnt = 0;
-            var scopes = _scopeStore.Values.Where(v => v.GROUP_ID == group_id);
-            DbConnectionScope tmp;
-            foreach (var scope in scopes)
+            set
             {
-                if (_scopeStore.TryRemove(scope.UNIQUE_ID, out tmp))
-                    ++cnt;
+
+                Guid? id = value == null ? (Guid?)null : value.UNIQUE_ID;
+                if (id.HasValue)
+                    CallContext.LogicalSetData(SLOT_KEY, id);
+                else
+                    CallContext.LogicalSetData(SLOT_KEY, null);
             }
-            return cnt;
         }
 #endregion
 
@@ -177,7 +164,7 @@ namespace Bell.PPS.Database.Shared
                     }
 
                     _scopeStore.TryAdd(this.UNIQUE_ID, this);
-                    __setCurrentScope(this);
+                    __currentScope = this;
                     _isDisposed = false;
                 }
             }
@@ -210,7 +197,7 @@ namespace Bell.PPS.Database.Shared
                     {
                         DbConnectionScope tmp;
                         _scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
-                        __setCurrentScope(prior);
+                        __currentScope = prior;
                     }
                     finally
                     {
