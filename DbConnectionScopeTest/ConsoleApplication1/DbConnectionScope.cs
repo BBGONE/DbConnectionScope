@@ -213,29 +213,34 @@ namespace Bell.PPS.Database.Shared
                         {
                             prior = prior._priorScope;
                         }
-                        __setCurrentScope(prior, true);
-
-                        // secondly, make sure our internal state is set to "Disposed"
-                        var connections = _connections;
-                        _connections = null;
-
-                        // Lastly, clean up the connections we own
-                        if (connections != null)
+                        try
                         {
-                            foreach (DbConnection connection in connections.Values)
+                            __setCurrentScope(prior, true);
+                        }
+                        finally
+                        {
+                            // secondly, make sure our internal state is set to "Disposed"
+                            _isDisposed = true;
+
+                            var connections = _connections;
+                            _connections = null;
+
+                            // Lastly, clean up the connections we own
+                            if (connections != null)
                             {
-                                if (connection.State != ConnectionState.Closed)
+                                foreach (DbConnection connection in connections.Values)
                                 {
-                                    connection.Dispose();
+                                    if (connection.State != ConnectionState.Closed)
+                                    {
+                                        connection.Dispose();
+                                    }
                                 }
+                                connections.Clear();
                             }
-                            connections.Clear();
                         }
                     }
                     finally
                     {
-                        _isDisposed = true;
-
                         //This is the topmost scope
                         if (_priorScope == null)
                         {
