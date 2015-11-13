@@ -23,8 +23,8 @@ namespace ConsoleApplication1
                     {
                         var task = DbConnectionScopeTest.Start(connectionString);
                         task.Wait(60000);
-                        --cnt;
-                        if (cnt == 0)
+                        var res = Interlocked.Decrement(ref cnt);
+                        if (res == 0)
                             tcs.SetResult(null);
                     });
                 }
