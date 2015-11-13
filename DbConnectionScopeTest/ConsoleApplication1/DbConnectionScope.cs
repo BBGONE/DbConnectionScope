@@ -5,7 +5,7 @@ using System.Data.Common;
 using System.Transactions;
 using System.Runtime.Remoting.Messaging;
 using System.Threading.Tasks;
-using System.Diagnostics;
+using System.Linq;
 
 namespace Bell.PPS.Database.Shared
 {
@@ -49,15 +49,17 @@ namespace Bell.PPS.Database.Shared
     /// </summary>
     public sealed class DbConnectionScope : IDisposable
     {
-        private static readonly string SLOT_KEY = Guid.NewGuid().ToString();
-        private static ConcurrentDictionary<Guid, DbConnectionScope> _scopeStore = new ConcurrentDictionary<Guid, DbConnectionScope>();
-
+        private const string SLOT_KEY = "_DbConnectionScope";
+        
+        //For Testing Purposes
         public static int GetScopeStoreCount() {
             return _scopeStore.Count;
         }
 
 
         #region class fields
+        private static ConcurrentDictionary<Guid, DbConnectionScope> _scopeStore = new ConcurrentDictionary<Guid, DbConnectionScope>();
+
         private static DbConnectionScope __currentScope
         {
             get
@@ -104,15 +106,30 @@ namespace Bell.PPS.Database.Shared
             _scopeStore.AddOrUpdate(value.UNIQUE_ID, value, (key, old) => value);
             CallContext.LogicalSetData(SLOT_KEY, value.UNIQUE_ID);
         }
+
+        private static int __clearScopeGroup(Guid group_id)
+        {
+            int cnt = 0;
+            var scopes = _scopeStore.Values.Where(v => v.GROUP_ID == group_id);
+            DbConnectionScope tmp;
+            foreach (var scope in scopes)
+            {
+                if (_scopeStore.TryRemove(scope.UNIQUE_ID, out tmp))
+                    ++cnt;
+            }
+            return cnt;
+        }
         #endregion
 
         #region instance fields
-        public readonly Guid UNIQUE_ID = Guid.NewGuid();
+        internal readonly Guid UNIQUE_ID = Guid.NewGuid();
+        //AN ID OF THE GROUP of scopes (top scope and nested ones have the same GROUP_ID)
+        internal readonly Guid GROUP_ID;
         private readonly object SyncRoot = new object();
 
         private DbConnectionScope _priorScope;    // previous scope in stack of scopes on this thread
         private ConcurrentDictionary<string, DbConnection> _connections;   // set of connections contained by this scope.
-        private volatile bool _isDisposed;   // 
+        private bool _isDisposed; 
 
         #endregion
 
@@ -158,9 +175,13 @@ namespace Bell.PPS.Database.Shared
                     // Devnote:  Order of initial assignment is important in cases of failure!
                     //  _priorScope first makes sure we know who we need to restore
                     //  _isDisposed second, to make sure we no-op dispose until we're as close to
-                    //      correct setup as possible (i.e. all other instance fields set prior to _isDisposed = false)
+                    //   correct setup as possible (i.e. all other instance fields set prior to _isDisposed = false)
                     //  __currentScope last, to make sure the thread static only holds validly set up objects
                     _priorScope = __currentScope;
+                    if (_priorScope == null)
+                        this.GROUP_ID = Guid.NewGuid();
+                    else
+                        this.GROUP_ID = _priorScope.GROUP_ID;
                     _isDisposed = false;
                     __setCurrentScope(this, false);
                 }
@@ -186,30 +207,45 @@ namespace Bell.PPS.Database.Shared
                     if (_isDisposed)
                         return;
                     DbConnectionScope prior = _priorScope;
-                    while (prior != null && prior._isDisposed)
+                    try
                     {
-                        prior = prior._priorScope;
-                    }
-                    __setCurrentScope(prior, true);
-
-                    // secondly, make sure our internal state is set to "Disposed"
-                    var connections = _connections;
-                    _connections = null;
-
-                    // Lastly, clean up the connections we own
-                    if (connections != null)
-                    {
-                        foreach (DbConnection connection in connections.Values)
+                        while (prior != null && prior._isDisposed)
                         {
-                            if (connection.State != ConnectionState.Closed)
-                            {
-                                connection.Dispose();
-                            }
+                            prior = prior._priorScope;
                         }
-                        connections.Clear();
-                    }
+                        __setCurrentScope(prior, true);
 
-                    _isDisposed = true;
+                        // secondly, make sure our internal state is set to "Disposed"
+                        var connections = _connections;
+                        _connections = null;
+
+                        // Lastly, clean up the connections we own
+                        if (connections != null)
+                        {
+                            foreach (DbConnection connection in connections.Values)
+                            {
+                                if (connection.State != ConnectionState.Closed)
+                                {
+                                    connection.Dispose();
+                                }
+                            }
+                            connections.Clear();
+                        }
+                    }
+                    finally
+                    {
+                        _isDisposed = true;
+
+                        //This is the topmost scope
+                        if (_priorScope == null)
+                        {
+                            //Make sure we removed everything belonging to our group of scopes (JUST in Case of Failure in Nested Scopes)
+                            int removed = __clearScopeGroup(GROUP_ID);
+                            //This Should Not Happen
+                            if (removed > 0)
+                                throw new InvalidOperationException("Final CleanUp detected that DbConnectionScope left unremoved scopes from the store.");
+                        }
+                    }
                 }
             }
         }
@@ -295,6 +331,15 @@ namespace Bell.PPS.Database.Shared
                 }
             }
             return found;
+        }
+
+
+        public bool IsDisposed
+        {
+            get
+            {
+                return _isDisposed;
+            }
         }
 
         #endregion

@@ -1,8 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.Remoting.Messaging;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Bell.PPS.Database.Shared;
@@ -39,19 +36,19 @@ namespace ConsoleApplication1
             {
                 Console.WriteLine("Starting On Thread: {0}", Thread.CurrentThread.ManagedThreadId);
                 await Task.Yield();
-
                 var conn1 = GetSqlConnection();
-                await Task.WhenAll(Enumerable.Range(1, 5).Select(async i =>
+                await Task.WhenAll(Enumerable.Range(1, 2).Select(async i =>
                 {
                     await FirstAsync(i, 100 * i);
                 }).ToArray());
                 var conn2 = GetSqlConnection();
+                await Task.Yield();
                 Console.WriteLine("Ending On Thread: {0}, Test Passed: {1}", Thread.CurrentThread.ManagedThreadId, Object.ReferenceEquals(conn1, conn2));
-                Console.WriteLine("DbConnectionScope.GetScopeStoreCount()==1, Now: {1}, Test Passed: {2}", Thread.CurrentThread.ManagedThreadId, DbConnectionScope.GetScopeStoreCount(), DbConnectionScope.GetScopeStoreCount()==1);
+                Console.WriteLine("Before Scope End: DbConnectionScope.GetScopeStoreCount()== {0}",  DbConnectionScope.GetScopeStoreCount());
             }
 
 
-            Console.WriteLine("DbConnectionScope.GetScopeStoreCount()==0, Now: {1}, Test Passed: {2}", Thread.CurrentThread.ManagedThreadId, DbConnectionScope.GetScopeStoreCount(), DbConnectionScope.GetScopeStoreCount() == 0);
+            Console.WriteLine("After Scope End: DbConnectionScope.GetScopeStoreCount()== {0}", DbConnectionScope.GetScopeStoreCount());
         }
 
         static async Task FirstAsync(int num, int wait)
@@ -91,10 +88,11 @@ namespace ConsoleApplication1
             bool isTheyEqual = Object.ReferenceEquals(expectedConn, localConn);
             object res = await cmd.ExecuteScalarAsync().ConfigureAwait(false);
 
-            Console.WriteLine("Thread: {0}, CmdResult: {1},  Test Passed: {2}", Thread.CurrentThread.ManagedThreadId, res, (isTheyEqual == ShouldBeEqual));
+            Console.WriteLine("Thread: {0}, CmdResult: {1}, IsRecursive: {2}, Test Passed: {3}", Thread.CurrentThread.ManagedThreadId, res, waitAmount==0, (isTheyEqual == ShouldBeEqual));
 
             if (waitAmount > 0)
             {
+                //Recursive CALL
                 await Task.Delay(waitAmount);
                 using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.RequiresNew, TransactionScopeAsyncFlowOption.Enabled))
                 //using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Suppress, TransactionScopeAsyncFlowOption.Enabled))

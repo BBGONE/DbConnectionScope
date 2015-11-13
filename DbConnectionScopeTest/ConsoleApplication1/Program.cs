@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ConsoleApplication1
@@ -13,8 +14,21 @@ namespace ConsoleApplication1
         {
             try
             {
-               var task = DbConnectionScopeTest.Start(connectionString);
-                task.Wait(60000);
+                //Just to Complicate Testing 
+                TaskCompletionSource<object> tcs = new TaskCompletionSource<object>();
+                int cnt = 3;
+                for (int i = 0; i < cnt; ++i)
+                {
+                    ThreadPool.QueueUserWorkItem((state) =>
+                    {
+                        var task = DbConnectionScopeTest.Start(connectionString);
+                        task.Wait(60000);
+                        --cnt;
+                        if (cnt == 0)
+                            tcs.SetResult(null);
+                    });
+                }
+                tcs.Task.Wait(60000);
             }
             catch (AggregateException aex)
             {
