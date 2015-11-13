@@ -71,7 +71,11 @@ namespace Bell.PPS.Database.Shared
         {
             get
             {
-                var res = CallContext.LogicalGetData(SLOT_KEY);
+                object res = null;
+                lock(_scopeStore)
+                {
+                    res = CallContext.LogicalGetData(SLOT_KEY);
+                }
                 if (res != null)
                 {
                     Guid scopeID = (Guid)res;
@@ -89,31 +93,31 @@ namespace Bell.PPS.Database.Shared
 
         private static void __setCurrentScope(DbConnectionScope value, bool isRemoveOld)
         {
-            Guid? scopeID = null;
-            var res = CallContext.LogicalGetData(SLOT_KEY);
-            if (res != null)
+            lock (_scopeStore)
             {
-                //Get current scope
-                scopeID = (Guid)res;
-            }
+                Guid? scopeID = null;
+                object res = null;
+                res = CallContext.LogicalGetData(SLOT_KEY);
 
-            if (isRemoveOld && scopeID.HasValue)
-            {
-                lock(_scopeStore)
+                if (res != null)
+                {
+                    //Get current scope
+                    scopeID = (Guid)res;
+                }
+
+                if (isRemoveOld && scopeID.HasValue)
                 {
                     DbConnectionScope scope;
                     _scopeStore.TryRemove(scopeID.Value, out scope);
                     CallContext.LogicalSetData(SLOT_KEY, null);
+
                 }
-            }
 
-            if (value == null)
-            {
-                return;
-            }
+                if (value == null)
+                {
+                    return;
+                }
 
-            lock(_scopeStore)
-            {
                 //REPLACE THE SLOT WITH THE NEW DATA
                 _scopeStore.AddOrUpdate(value.UNIQUE_ID, value, (key, old) => value);
                 CallContext.LogicalSetData(SLOT_KEY, value.UNIQUE_ID);
