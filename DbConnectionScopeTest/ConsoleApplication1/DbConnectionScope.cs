@@ -49,7 +49,7 @@ namespace Bell.PPS.Database.Shared
     /// </summary>
     public sealed class DbConnectionScope : IDisposable
     {
-        private const string SLOT_KEY = "_DbConnectionScope";
+        private static readonly string SLOT_KEY = Guid.NewGuid().ToString();
 
 #if TEST
         //For Testing Purposes
@@ -99,9 +99,12 @@ namespace Bell.PPS.Database.Shared
 
             if (isRemoveOld && scopeID.HasValue)
             {
-                DbConnectionScope scope;
-                _scopeStore.TryRemove(scopeID.Value, out scope);
-                CallContext.LogicalSetData(SLOT_KEY, null);
+                lock(_scopeStore)
+                {
+                    DbConnectionScope scope;
+                    _scopeStore.TryRemove(scopeID.Value, out scope);
+                    CallContext.LogicalSetData(SLOT_KEY, null);
+                }
             }
 
             if (value == null)
@@ -109,9 +112,12 @@ namespace Bell.PPS.Database.Shared
                 return;
             }
 
-            //REPLACE THE SLOT WITH THE NEW DATA
-            _scopeStore.AddOrUpdate(value.UNIQUE_ID, value, (key, old) => value);
-            CallContext.LogicalSetData(SLOT_KEY, value.UNIQUE_ID);
+            lock(_scopeStore)
+            {
+                //REPLACE THE SLOT WITH THE NEW DATA
+                _scopeStore.AddOrUpdate(value.UNIQUE_ID, value, (key, old) => value);
+                CallContext.LogicalSetData(SLOT_KEY, value.UNIQUE_ID);
+            }
         }
 
         private static int __clearScopeGroup(Guid group_id)
