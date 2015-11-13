@@ -50,12 +50,19 @@ namespace Bell.PPS.Database.Shared
     public sealed class DbConnectionScope : IDisposable
     {
         private const string SLOT_KEY = "_DbConnectionScope";
-        
+
+#if TEST
         //For Testing Purposes
         public static int GetScopeStoreCount() {
             return _scopeStore.Count;
         }
 
+        //For Testing Purposes
+        public static int GetScopeGroupsCount()
+        {
+            return _scopeStore.Values.Select(v => v.GROUP_ID).Distinct().Count();
+        }
+#endif
 
         #region class fields
         private static ConcurrentDictionary<Guid, DbConnectionScope> _scopeStore = new ConcurrentDictionary<Guid, DbConnectionScope>();
@@ -119,9 +126,9 @@ namespace Bell.PPS.Database.Shared
             }
             return cnt;
         }
-        #endregion
+#endregion
 
-        #region instance fields
+#region instance fields
         internal readonly Guid UNIQUE_ID = Guid.NewGuid();
         //AN ID OF THE GROUP of scopes (top scope and nested ones have the same GROUP_ID)
         internal readonly Guid GROUP_ID;
@@ -131,9 +138,9 @@ namespace Bell.PPS.Database.Shared
         private ConcurrentDictionary<string, DbConnection> _connections;   // set of connections contained by this scope.
         private bool _isDisposed; 
 
-        #endregion
+#endregion
 
-        #region public class methods and properties
+#region public class methods and properties
 
         /// <summary>
         /// Obtain the currently active connection scope
@@ -147,9 +154,9 @@ namespace Bell.PPS.Database.Shared
             }
         }
 
-        #endregion
+#endregion
 
-        #region public instance methods and properties
+#region public instance methods and properties
 
         /// <summary>
         /// Default Constructor
@@ -347,9 +354,9 @@ namespace Bell.PPS.Database.Shared
             }
         }
 
-        #endregion
+#endregion
 
-        #region private methods and properties
+#region private methods and properties
         /// <summary>
         /// Handle calling API function after instance has been disposed
         /// </summary>
@@ -360,6 +367,6 @@ namespace Bell.PPS.Database.Shared
                 throw new ObjectDisposedException("DbConnectionScope");
             }
         }
-        #endregion
+#endregion
     }
 }
