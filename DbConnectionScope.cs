@@ -87,23 +87,13 @@ namespace Bell.PPS.Database.Shared
             }
         }
 
-        private static void __setCurrentScope(DbConnectionScope newScope, Guid? toRemoveID)
+        private static void __setCurrentScope(DbConnectionScope newScope)
         {
-            if (toRemoveID.HasValue)
-            {
-                DbConnectionScope scope;
-                _scopeStore.TryRemove(toRemoveID.Value, out scope);
+            Guid? id = newScope == null ? (Guid?)null : newScope.UNIQUE_ID;
+            if (id.HasValue)
+                CallContext.LogicalSetData(SLOT_KEY, id);
+            else
                 CallContext.LogicalSetData(SLOT_KEY, null);
-            }
-
-            if (newScope == null)
-            {
-                return;
-            }
-
-            //REPLACE THE SLOT WITH THE NEW DATA
-            _scopeStore.AddOrUpdate(newScope.UNIQUE_ID, newScope, (key, old) => newScope);
-            CallContext.LogicalSetData(SLOT_KEY, newScope.UNIQUE_ID);
         }
 
         private static int __clearScopeGroup(Guid group_id)
@@ -185,8 +175,10 @@ namespace Bell.PPS.Database.Shared
                     {
                         this.GROUP_ID = _priorScope.GROUP_ID;
                     }
+
+                    _scopeStore.TryAdd(this.UNIQUE_ID, this);
+                    __setCurrentScope(this);
                     _isDisposed = false;
-                    __setCurrentScope(this, null);
                 }
             }
         }
@@ -210,48 +202,32 @@ namespace Bell.PPS.Database.Shared
                     if (_isDisposed)
                         return;
                     DbConnectionScope prior = _priorScope;
+                    while (prior != null && prior._isDisposed)
+                    {
+                        prior = prior._priorScope;
+                    }
                     try
                     {
-                        while (prior != null && prior._isDisposed)
-                        {
-                            prior = prior._priorScope;
-                        }
-                        try
-                        {
-                            __setCurrentScope(prior, this.UNIQUE_ID);
-                        }
-                        finally
-                        {
-                            // secondly, make sure our internal state is set to "Disposed"
-                            _isDisposed = true;
-
-                            var connections = _connections;
-                            _connections = null;
-
-                            // Lastly, clean up the connections we own
-                            if (connections != null)
-                            {
-                                foreach (DbConnection connection in connections.Values)
-                                {
-                                    if (connection.State != ConnectionState.Closed)
-                                    {
-                                        connection.Dispose();
-                                    }
-                                }
-                                connections.Clear();
-                            }
-                        }
+                        DbConnectionScope tmp;
+                        _scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
+                        __setCurrentScope(prior);
                     }
                     finally
                     {
-                        //This is the topmost scope
-                        if (_priorScope == null)
+                        // secondly, make sure our internal state is set to "Disposed"
+                        _isDisposed = true;
+
+                        var connections = _connections.Values.ToArray();
+                        _connections.Clear();
+                        _connections = null;
+
+                        // Lastly, clean up the connections we own
+                        foreach (DbConnection connection in connections)
                         {
-                            //Make sure we removed everything belonging to our group of scopes (JUST in Case of Failure in Nested Scopes)
-                            int removed = __clearScopeGroup(GROUP_ID);
-                            //This Should Not Happen
-                            if (removed > 0)
-                                throw new InvalidOperationException("Final CleanUp detected that DbConnectionScope left unremoved scopes from the store.");
+                            if (connection.State != ConnectionState.Closed)
+                            {
+                                connection.Dispose();
+                            }
                         }
                     }
                 }
