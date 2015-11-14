@@ -140,17 +140,9 @@ namespace Bell.PPS.Database.Shared
                 //   correct setup as possible (i.e. all other instance fields set prior to _isDisposed = false)
                 //  __currentScope last, to make sure the thread static only holds validly set up objects
                 _outerScope = __currentScope;
-                _scopeStore.TryAdd(this.UNIQUE_ID, this);
-                try
-                {
-                    __currentScope = this;
-                }
-                catch {
-                    DbConnectionScope tmp;
-                    _scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
-                    throw;
-                }
-                _isDisposed = false;
+                __currentScope = this;
+                if (_scopeStore.TryAdd(this.UNIQUE_ID, this))
+                    _isDisposed = false;
             }
         }
 
@@ -159,59 +151,85 @@ namespace Bell.PPS.Database.Shared
         /// </summary>
         public void Dispose()
         {
-            if (!_isDisposed)
+            lock (this.SyncRoot)
             {
-                // Firstly, remove ourselves from the stack (but, only if we are the one on the stack)
-                //  Note: Thread-local _currentScope, and requirement that scopes not be disposed on other threads
-                //      means we can get away with not locking.  Worst case is that we corrupt the connections
-                //      and the IDictionary contained in the scope that's being disposed on two threads -- we don't
-                //      corrupt the __currentScope stack because we don't touch it unless this instance is in said stack!
-                // In case the user called dispose out of order, skip up the chain until we find
-                //  an undisposed scope.
-                if (_isDisposed)
-                    return;
-                DbConnectionScope outerScope = _outerScope;
-                while (outerScope != null && outerScope._isDisposed)
+                if (!_isDisposed)
                 {
-                    outerScope = outerScope._outerScope;
-                }
-                try
-                {
-                    DbConnectionScope tmp;
-                    _scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
-                    __currentScope = outerScope;
-                }
-                finally
-                {
-                    // secondly, make sure our internal state is set to "Disposed"
-                    _isDisposed = true;
-
-                    var connections = _connections.Values.ToArray();
-                    _connections.Clear();
-                    _connections = null;
-
-                    // Lastly, clean up the connections we own
-                    foreach (DbConnection connection in connections)
+                    // Firstly, remove ourselves from the stack (but, only if we are the one on the stack)
+                    //  Note: Thread-local _currentScope, and requirement that scopes not be disposed on other threads
+                    //      means we can get away with not locking.  Worst case is that we corrupt the connections
+                    //      and the IDictionary contained in the scope that's being disposed on two threads -- we don't
+                    //      corrupt the __currentScope stack because we don't touch it unless this instance is in said stack!
+                    // In case the user called dispose out of order, skip up the chain until we find
+                    //  an undisposed scope.
+                    if (_isDisposed)
+                        return;
+                    DbConnectionScope outerScope = _outerScope;
+                    while (outerScope != null && outerScope._isDisposed)
                     {
-                        if (connection.State != ConnectionState.Closed)
+                        outerScope = outerScope._outerScope;
+                    }
+                    try
+                    {
+                        DbConnectionScope tmp;
+                        _scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
+                        __currentScope = outerScope;
+                    }
+                    finally
+                    {
+                        // secondly, make sure our internal state is set to "Disposed"
+                        _isDisposed = true;
+
+                        var connections = _connections.Values.ToArray();
+                        _connections.Clear();
+                        _connections = null;
+
+                        // Lastly, clean up the connections we own
+                        foreach (DbConnection connection in connections)
                         {
-                            connection.Dispose();
+                            if (connection.State != ConnectionState.Closed)
+                            {
+                                connection.Dispose();
+                            }
                         }
                     }
                 }
             }
         }
 
+        /// <summary>
+        /// Get the connection associated with this key.
+        /// </summary>
+        /// <param name="connectionString">Key to use for lookup</param>
+        /// <param name="connection">Associated connection</param>
+        /// <returns>True if connection found, false otherwise</returns>
+        public bool TryGetConnection(string connectionString, out DbConnection connection)
+        {
+            bool found = false;
+            lock (this.SyncRoot)
+            {
+                CheckDisposed();
+                found = _connections.TryGetValue(connectionString, out connection);
+                var currTran = Transaction.Current;
+                if (found && (currTran == null || currTran.TransactionInformation.Status != TransactionStatus.Active))
+                {
+                    DbConnection tmp;
+                    _connections.TryRemove(connectionString, out tmp);
+                    connection.Dispose();
+                    connection = null;
+                    found = false;
+                }
+            }
+            return found;
+        }
+
         public DbConnection GetConnection(DbProviderFactory factory, string connectionString)
         {
-            CheckDisposed();
-            // go get the connection
             DbConnection result = null;
             lock (this.SyncRoot)
             {
                 if (!TryGetConnection(connectionString, out result))
                 {
-                    // didn't find it, so create it.
                     result = factory.CreateConnection();
                     result.ConnectionString = connectionString;
                     _connections.TryAdd(connectionString, result);
@@ -254,34 +272,6 @@ namespace Bell.PPS.Database.Shared
                 await result.OpenAsync();
             return result;
         }
-
-
-        /// <summary>
-        /// Get the connection associated with this key.
-        /// </summary>
-        /// <param name="connectionString">Key to use for lookup</param>
-        /// <param name="connection">Associated connection</param>
-        /// <returns>True if connection found, false otherwise</returns>
-        public bool TryGetConnection(string connectionString, out DbConnection connection)
-        {
-            CheckDisposed();
-            bool found = false;
-            lock (this.SyncRoot)
-            {
-                found = _connections.TryGetValue(connectionString, out connection);
-                var currTran = Transaction.Current;
-                if (found && (currTran == null || currTran.TransactionInformation.Status != TransactionStatus.Active))
-                {
-                    DbConnection tmp;
-                    _connections.TryRemove(connectionString, out tmp);
-                    connection.Dispose();
-                    connection = null;
-                    found = false;
-                }
-            }
-            return found;
-        }
-
 
         public bool IsDisposed
         {
