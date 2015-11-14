@@ -146,55 +146,18 @@ namespace Bell.PPS.Database.Shared
             }
         }
 
+        ~DbConnectionScope()
+        {
+            Dispose(false);
+        }
+
         /// <summary>
-        /// Shut down this instance.  Disposes all connections it holds and restores the prior scope.
+        /// Shut down this instance.  Disposes all connections it holds and restores the outer scope.
         /// </summary>
         public void Dispose()
         {
-            lock (this.SyncRoot)
-            {
-                if (!_isDisposed)
-                {
-                    // Firstly, remove ourselves from the stack (but, only if we are the one on the stack)
-                    //  Note: Thread-local _currentScope, and requirement that scopes not be disposed on other threads
-                    //      means we can get away with not locking.  Worst case is that we corrupt the connections
-                    //      and the IDictionary contained in the scope that's being disposed on two threads -- we don't
-                    //      corrupt the __currentScope stack because we don't touch it unless this instance is in said stack!
-                    // In case the user called dispose out of order, skip up the chain until we find
-                    //  an undisposed scope.
-                    if (_isDisposed)
-                        return;
-                    DbConnectionScope outerScope = _outerScope;
-                    while (outerScope != null && outerScope._isDisposed)
-                    {
-                        outerScope = outerScope._outerScope;
-                    }
-                    try
-                    {
-                        DbConnectionScope tmp;
-                        _scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
-                        __currentScope = outerScope;
-                    }
-                    finally
-                    {
-                        // secondly, make sure our internal state is set to "Disposed"
-                        _isDisposed = true;
-
-                        var connections = _connections.Values.ToArray();
-                        _connections.Clear();
-                        _connections = null;
-
-                        // Lastly, clean up the connections we own
-                        foreach (DbConnection connection in connections)
-                        {
-                            if (connection.State != ConnectionState.Closed)
-                            {
-                                connection.Dispose();
-                            }
-                        }
-                    }
-                }
-            }
+            Dispose(true);
+            GC.SuppressFinalize(this);
         }
 
         /// <summary>
@@ -294,6 +257,53 @@ namespace Bell.PPS.Database.Shared
                 throw new ObjectDisposedException("DbConnectionScope");
             }
         }
-#endregion
+
+        private void Dispose(bool disposing)
+        {
+            if (_isDisposed)
+                return;
+            if (disposing)
+            {
+                lock (this.SyncRoot)
+                {
+                    DbConnectionScope outerScope = _outerScope;
+                    while (outerScope != null && outerScope._isDisposed)
+                    {
+                        outerScope = outerScope._outerScope;
+                    }
+                    try
+                    {
+                        DbConnectionScope tmp;
+                        _scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
+                        __currentScope = outerScope;
+                    }
+                    finally
+                    {
+                        _isDisposed = true;
+
+                        var connections = _connections.Values.ToArray();
+                        _connections.Clear();
+                        _connections = null;
+
+                        // Lastly, clean up the connections we own
+                        foreach (DbConnection connection in connections)
+                        {
+                            if (connection.State != ConnectionState.Closed)
+                            {
+                                connection.Dispose();
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                DbConnectionScope tmp;
+                _scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
+                _isDisposed = true;
+            }
+        }
+        #endregion
+
     }
 }
