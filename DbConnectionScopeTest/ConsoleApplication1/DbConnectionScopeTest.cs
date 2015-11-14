@@ -42,11 +42,9 @@ namespace ConsoleApplication1
                 }).ToArray());
                 var conn2 = await GetSqlConnectionAsync();
                 Console.WriteLine("Ending On Thread: {0}, Test Passed: {1}", Thread.CurrentThread.ManagedThreadId, Object.ReferenceEquals(conn1, conn2));
-                Console.WriteLine("Before Scope End: DbConnectionScope.GetScopeStoreCount()== {0}, Groups: {1}",  DbConnectionScope.GetScopeStoreCount(), DbConnectionScope.GetScopeGroupsCount());
+                Console.WriteLine("Before Scope End: DbConnectionScope.GetScopeStoreCount()== {0}",  DbConnectionScope.GetScopeStoreCount());
             }
-
-
-            Console.WriteLine("After Scope End: DbConnectionScope.GetScopeStoreCount()== {0}, Groups: {1}", DbConnectionScope.GetScopeStoreCount(), DbConnectionScope.GetScopeGroupsCount());
+            Console.WriteLine("After Scope End: DbConnectionScope.GetScopeStoreCount()== {0}", DbConnectionScope.GetScopeStoreCount());
         }
 
         static async Task FirstAsync(int num, int wait)

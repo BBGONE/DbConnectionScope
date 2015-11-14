@@ -56,12 +56,6 @@ namespace Bell.PPS.Database.Shared
         public static int GetScopeStoreCount() {
             return _scopeStore.Count;
         }
-
-        //For Testing Purposes
-        public static int GetScopeGroupsCount()
-        {
-            return _scopeStore.Values.Select(v => v.GROUP_ID).Distinct().Count();
-        }
 #endif
 
         #region class fields
@@ -99,18 +93,13 @@ namespace Bell.PPS.Database.Shared
 
 #region instance fields
         internal readonly Guid UNIQUE_ID = Guid.NewGuid();
-        //AN ID OF THE GROUP of scopes (top scope and nested ones have the same GROUP_ID)
-        internal readonly Guid GROUP_ID;
-        private readonly object SyncRoot = new object();
-
-        private DbConnectionScope _priorScope;    // previous scope in stack of scopes on this thread
+        private object SyncRoot = new object();
+        private DbConnectionScope _outerScope;    // outer scope in stack of scopes on this call context
         private ConcurrentDictionary<string, DbConnection> _connections;   // set of connections contained by this scope.
         private bool _isDisposed; 
-
 #endregion
 
 #region public class methods and properties
-
         /// <summary>
         /// Obtain the currently active connection scope
         /// </summary>
@@ -118,8 +107,7 @@ namespace Bell.PPS.Database.Shared
         {
             get
             {
-                var scope = __currentScope;
-                return scope;
+                return __currentScope;
             }
         }
 
@@ -140,33 +128,29 @@ namespace Bell.PPS.Database.Shared
         /// <param name="option">Option for how to modify Current during constructor</param>
         public DbConnectionScope(DbConnectionScopeOption option)
         {
-            lock(this.SyncRoot)
+            _isDisposed = true;  // short circuit Dispose until we're properly set up
+            if (option == DbConnectionScopeOption.RequiresNew || (option == DbConnectionScopeOption.Required && __currentScope == null))
             {
-                _isDisposed = true;  // short circuit Dispose until we're properly set up
-                if (option == DbConnectionScopeOption.RequiresNew || (option == DbConnectionScopeOption.Required && __currentScope == null))
+                // only bother allocating dictionary if we're going to push
+                _connections = new ConcurrentDictionary<string, DbConnection>();
+
+                // Devnote:  Order of initial assignment is important in cases of failure!
+                //  _priorScope first makes sure we know who we need to restore
+                //  _isDisposed second, to make sure we no-op dispose until we're as close to
+                //   correct setup as possible (i.e. all other instance fields set prior to _isDisposed = false)
+                //  __currentScope last, to make sure the thread static only holds validly set up objects
+                _outerScope = __currentScope;
+                _scopeStore.TryAdd(this.UNIQUE_ID, this);
+                try
                 {
-                    // only bother allocating dictionary if we're going to push
-                    _connections = new ConcurrentDictionary<string, DbConnection>();
-
-                    // Devnote:  Order of initial assignment is important in cases of failure!
-                    //  _priorScope first makes sure we know who we need to restore
-                    //  _isDisposed second, to make sure we no-op dispose until we're as close to
-                    //   correct setup as possible (i.e. all other instance fields set prior to _isDisposed = false)
-                    //  __currentScope last, to make sure the thread static only holds validly set up objects
-                    _priorScope = __currentScope;
-                    if (_priorScope == null)
-                    {
-                        this.GROUP_ID = Guid.NewGuid();
-                    }
-                    else
-                    {
-                        this.GROUP_ID = _priorScope.GROUP_ID;
-                    }
-
-                    _scopeStore.TryAdd(this.UNIQUE_ID, this);
                     __currentScope = this;
-                    _isDisposed = false;
                 }
+                catch {
+                    DbConnectionScope tmp;
+                    _scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
+                    throw;
+                }
+                _isDisposed = false;
             }
         }
 
@@ -184,37 +168,34 @@ namespace Bell.PPS.Database.Shared
                 //      corrupt the __currentScope stack because we don't touch it unless this instance is in said stack!
                 // In case the user called dispose out of order, skip up the chain until we find
                 //  an undisposed scope.
-                lock (this.SyncRoot)
+                if (_isDisposed)
+                    return;
+                DbConnectionScope outerScope = _outerScope;
+                while (outerScope != null && outerScope._isDisposed)
                 {
-                    if (_isDisposed)
-                        return;
-                    DbConnectionScope prior = _priorScope;
-                    while (prior != null && prior._isDisposed)
-                    {
-                        prior = prior._priorScope;
-                    }
-                    try
-                    {
-                        DbConnectionScope tmp;
-                        _scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
-                        __currentScope = prior;
-                    }
-                    finally
-                    {
-                        // secondly, make sure our internal state is set to "Disposed"
-                        _isDisposed = true;
+                    outerScope = outerScope._outerScope;
+                }
+                try
+                {
+                    DbConnectionScope tmp;
+                    _scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
+                    __currentScope = outerScope;
+                }
+                finally
+                {
+                    // secondly, make sure our internal state is set to "Disposed"
+                    _isDisposed = true;
 
-                        var connections = _connections.Values.ToArray();
-                        _connections.Clear();
-                        _connections = null;
+                    var connections = _connections.Values.ToArray();
+                    _connections.Clear();
+                    _connections = null;
 
-                        // Lastly, clean up the connections we own
-                        foreach (DbConnection connection in connections)
+                    // Lastly, clean up the connections we own
+                    foreach (DbConnection connection in connections)
+                    {
+                        if (connection.State != ConnectionState.Closed)
                         {
-                            if (connection.State != ConnectionState.Closed)
-                            {
-                                connection.Dispose();
-                            }
+                            connection.Dispose();
                         }
                     }
                 }
@@ -223,12 +204,11 @@ namespace Bell.PPS.Database.Shared
 
         public DbConnection GetConnection(DbProviderFactory factory, string connectionString)
         {
+            CheckDisposed();
             // go get the connection
             DbConnection result = null;
             lock (this.SyncRoot)
             {
-                CheckDisposed();
-
                 if (!TryGetConnection(connectionString, out result))
                 {
                     // didn't find it, so create it.
@@ -252,7 +232,6 @@ namespace Bell.PPS.Database.Shared
         public DbConnection GetOpenConnection(DbProviderFactory factory, string connectionString)
         {
             DbConnection result = this.GetConnection(factory, connectionString);
-
             // however we got it, open it if it's closed.
             //  note: don't open unless state is unambiguous that it's ok to open
             if (result.State == ConnectionState.Closed)
@@ -285,11 +264,10 @@ namespace Bell.PPS.Database.Shared
         /// <returns>True if connection found, false otherwise</returns>
         public bool TryGetConnection(string connectionString, out DbConnection connection)
         {
+            CheckDisposed();
             bool found = false;
-
             lock (this.SyncRoot)
             {
-                CheckDisposed();
                 found = _connections.TryGetValue(connectionString, out connection);
                 var currTran = Transaction.Current;
                 if (found && (currTran == null || currTran.TransactionInformation.Status != TransactionStatus.Active))

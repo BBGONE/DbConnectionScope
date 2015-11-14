@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Bell.PPS.Database.Shared;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -29,6 +30,7 @@ namespace ConsoleApplication1
                     });
                 }
                 tcs.Task.Wait(60000);
+                Console.WriteLine("After End: DbConnectionScope.GetScopeStoreCount()== {0}", DbConnectionScope.GetScopeStoreCount());
             }
             catch (AggregateException aex)
             {
