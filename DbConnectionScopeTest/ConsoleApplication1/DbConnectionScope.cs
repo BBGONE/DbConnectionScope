@@ -54,12 +54,12 @@ namespace Bell.PPS.Database.Shared
 #if TEST
         //For Testing Purposes
         public static int GetScopeStoreCount() {
-            return _scopeStore.Count;
+            return __scopeStore.Count;
         }
 #endif
 
         #region class fields
-        private static ConcurrentDictionary<Guid, DbConnectionScope> _scopeStore = new ConcurrentDictionary<Guid, DbConnectionScope>();
+        private static ConcurrentDictionary<Guid, WeakReference<DbConnectionScope>> __scopeStore = new ConcurrentDictionary<Guid, WeakReference<DbConnectionScope>>();
 
         private static DbConnectionScope __currentScope
         {
@@ -69,9 +69,15 @@ namespace Bell.PPS.Database.Shared
                 if (res != null)
                 {
                     Guid scopeID = (Guid)res;
+                    WeakReference<DbConnectionScope> wref;
                     DbConnectionScope scope;
-                    if (_scopeStore.TryGetValue(scopeID, out scope))
-                        return scope;
+                    if (__scopeStore.TryGetValue(scopeID, out wref))
+                    {
+                        if (wref.TryGetTarget(out scope))
+                            return scope;
+                        else
+                            return null;
+                    }
                     else
                     {
                         return null;
@@ -141,8 +147,10 @@ namespace Bell.PPS.Database.Shared
                 //  __currentScope last, to make sure the thread static only holds validly set up objects
                 _outerScope = __currentScope;
                 __currentScope = this;
-                if (_scopeStore.TryAdd(this.UNIQUE_ID, this))
+                if (__scopeStore.TryAdd(this.UNIQUE_ID, new WeakReference<DbConnectionScope>(this)))
+                {
                     _isDisposed = false;
+                }
             }
         }
 
@@ -151,21 +159,12 @@ namespace Bell.PPS.Database.Shared
             Dispose(false);
         }
 
-        /// <summary>
-        /// Shut down this instance.  Disposes all connections it holds and restores the outer scope.
-        /// </summary>
         public void Dispose()
         {
             Dispose(true);
             GC.SuppressFinalize(this);
         }
 
-        /// <summary>
-        /// Get the connection associated with this key.
-        /// </summary>
-        /// <param name="connectionString">Key to use for lookup</param>
-        /// <param name="connection">Associated connection</param>
-        /// <returns>True if connection found, false otherwise</returns>
         public bool TryGetConnection(string connectionString, out DbConnection connection)
         {
             bool found = false;
@@ -202,14 +201,6 @@ namespace Bell.PPS.Database.Shared
             return result;
         }
 
-        /// <summary>
-        /// This method gets the connection using the connection string as a key.  If no connection is
-        /// associated with the string, the connection factory is used to create the connection.
-        /// Finally, if the resulting connection is in the closed state, it is opened.
-        /// </summary>
-        /// <param name="factory">Factory to use to create connection if it is not already present</param>
-        /// <param name="connectionString">Connection string to use</param>
-        /// <returns>Connection in open state</returns>
         public DbConnection GetOpenConnection(DbProviderFactory factory, string connectionString)
         {
             DbConnection result = this.GetConnection(factory, connectionString);
@@ -220,14 +211,6 @@ namespace Bell.PPS.Database.Shared
             return result;
         }
 
-        /// <summary>
-        /// This method gets the connection using the connection string as a key.  If no connection is
-        /// associated with the string, the connection factory is used to create the connection.
-        /// Finally, if the resulting connection is in the closed state, it is opened.
-        /// </summary>
-        /// <param name="factory">Factory to use to create connection if it is not already present</param>
-        /// <param name="connectionString">Connection string to use</param>
-        /// <returns>Connection in open state</returns>
         public async Task<DbConnection> GetOpenConnectionAsync(DbProviderFactory factory, string connectionString)
         {
             DbConnection result = this.GetConnection(factory, connectionString);
@@ -243,7 +226,6 @@ namespace Bell.PPS.Database.Shared
                 return _isDisposed;
             }
         }
-
 #endregion
 
 #region private methods and properties
@@ -271,26 +253,27 @@ namespace Bell.PPS.Database.Shared
                     {
                         outerScope = outerScope._outerScope;
                     }
+
                     try
                     {
-                        DbConnectionScope tmp;
-                        _scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
+                        WeakReference<DbConnectionScope> tmp;
+                        __scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
                         __currentScope = outerScope;
                     }
                     finally
                     {
                         _isDisposed = true;
-
-                        var connections = _connections.Values.ToArray();
-                        _connections.Clear();
-                        _connections = null;
-
-                        // Lastly, clean up the connections we own
-                        foreach (DbConnection connection in connections)
+                        if (_connections != null)
                         {
-                            if (connection.State != ConnectionState.Closed)
+                            var connections = _connections.Values.ToArray();
+                            _connections.Clear();
+                            _connections = null;
+                            foreach (DbConnection connection in connections)
                             {
-                                connection.Dispose();
+                                if (connection.State != ConnectionState.Closed)
+                                {
+                                    connection.Dispose();
+                                }
                             }
                         }
                     }
@@ -298,12 +281,11 @@ namespace Bell.PPS.Database.Shared
             }
             else
             {
-                DbConnectionScope tmp;
-                _scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
+                WeakReference<DbConnectionScope> tmp;
+                __scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
                 _isDisposed = true;
             }
         }
         #endregion
-
     }
 }
