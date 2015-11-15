@@ -90,9 +90,11 @@ namespace Bell.PPS.Database.Shared
 
                 Guid? id = value == null ? (Guid?)null : value.UNIQUE_ID;
                 if (id.HasValue)
+                {
                     CallContext.LogicalSetData(SLOT_KEY, id);
+                }
                 else
-                    CallContext.LogicalSetData(SLOT_KEY, null);
+                    CallContext.FreeNamedDataSlot(SLOT_KEY);
             }
         }
 #endregion
