@@ -94,7 +94,7 @@ namespace Bell.PPS.Database.Shared
         }
 #endif
 
-        #region class fields
+#region class fields
         private static ConcurrentDictionary<Guid, WeakReference<DbConnectionScope>> __scopeStore = new ConcurrentDictionary<Guid, WeakReference<DbConnectionScope>>();
 
         private static DbConnectionScope __currentScope
@@ -143,7 +143,18 @@ namespace Bell.PPS.Database.Shared
         private bool _isDisposed; 
 #endregion
 
-#region public class methods and properties
+#region class methods and properties
+        private static string GetConnectionID(string connectionString)
+        {
+            string transId = string.Empty;
+            var currTran = Transaction.Current;
+            if (currTran != null)
+            {
+                transId = currTran.TransactionInformation.LocalIdentifier;
+            }
+            return string.Format("{0}:{1}", transId, connectionString);
+        }
+
         /// <summary>
         /// Obtain the currently active connection scope
         /// </summary>
@@ -158,7 +169,6 @@ namespace Bell.PPS.Database.Shared
 #endregion
 
 #region public instance methods and properties
-
         /// <summary>
         /// Default Constructor
         /// </summary>
@@ -212,66 +222,6 @@ namespace Bell.PPS.Database.Shared
             }
         }
 
-        private bool TryGetConnectionById(string id, out DbConnection connection)
-        {
-            connection = null;
-            lock (this.SyncRoot)
-            {
-                CheckDisposed();
-                return _connections.TryGetValue(id, out connection);
-            }
-        }
-
-        private bool TryRemoveConnection(DbConnection connection)
-        {
-            lock (this.SyncRoot)
-            {
-                CheckDisposed();
-                string key = string.Empty;
-                foreach (var kvp in _connections)
-                {
-                    if (Object.ReferenceEquals(kvp.Value, connection))
-                    {
-                        key = kvp.Key;
-                        break;
-                    }
-                }
-                if (!string.IsNullOrEmpty(key)){
-                    DbConnection tmp;
-                    return _connections.TryRemove(key, out tmp);
-                }
-                return false;
-            }
-        }
-
-        private static string GetConnectionID(string connectionString)
-        {
-            string transId = string.Empty;
-            var currTran = Transaction.Current;
-            if (currTran != null)
-            {
-               transId =  currTran.TransactionInformation.LocalIdentifier;
-            }
-            return string.Format("{0}:{1}", transId, connectionString);
-        }
-
-        private DbConnection GetConnectionInternal(DbProviderFactory factory, string connectionString, out string id)
-        {
-            DbConnection result = null;
-            id = null;
-            lock (this.SyncRoot)
-            {
-                id = GetConnectionID(connectionString);
-                if (!TryGetConnectionById(id, out result))
-                {
-                    result = factory.CreateConnection();
-                    result.ConnectionString = connectionString;
-                    _connections.TryAdd(id, result);
-                }
-            }
-            return result;
-        }
-
         public DbConnection GetConnection(DbProviderFactory factory, string connectionString)
         {
             string id;
@@ -310,6 +260,56 @@ namespace Bell.PPS.Database.Shared
 #endregion
 
 #region private methods and properties
+        private DbConnection GetConnectionInternal(DbProviderFactory factory, string connectionString, out string id)
+        {
+            DbConnection result = null;
+            id = null;
+            lock (this.SyncRoot)
+            {
+                id = GetConnectionID(connectionString);
+                if (!TryGetConnectionById(id, out result))
+                {
+                    result = factory.CreateConnection();
+                    result.ConnectionString = connectionString;
+                    _connections.TryAdd(id, result);
+                }
+            }
+            return result;
+        }
+
+        private bool TryGetConnectionById(string id, out DbConnection connection)
+        {
+            connection = null;
+            lock (this.SyncRoot)
+            {
+                CheckDisposed();
+                return _connections.TryGetValue(id, out connection);
+            }
+        }
+
+        private bool TryRemoveConnection(DbConnection connection)
+        {
+            lock (this.SyncRoot)
+            {
+                CheckDisposed();
+                string key = string.Empty;
+                foreach (var kvp in _connections)
+                {
+                    if (Object.ReferenceEquals(kvp.Value, connection))
+                    {
+                        key = kvp.Key;
+                        break;
+                    }
+                }
+                if (!string.IsNullOrEmpty(key))
+                {
+                    DbConnection tmp;
+                    return _connections.TryRemove(key, out tmp);
+                }
+                return false;
+            }
+        }
+
         /// <summary>
         /// Handle calling API function after instance has been disposed
         /// </summary>
