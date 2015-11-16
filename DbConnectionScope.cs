@@ -304,7 +304,11 @@ namespace Bell.PPS.Database.Shared
                 if (!string.IsNullOrEmpty(key))
                 {
                     DbConnection tmp;
-                    return _connections.TryRemove(key, out tmp);
+                    if (_connections.TryRemove(key, out tmp))
+                    {
+                        tmp.Dispose();
+                        return true;
+                    }
                 }
                 return false;
             }
@@ -367,6 +371,6 @@ namespace Bell.PPS.Database.Shared
                 _isDisposed = true;
             }
         }
-        #endregion
+#endregion
     }
 }
