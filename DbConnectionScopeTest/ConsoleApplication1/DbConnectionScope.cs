@@ -169,22 +169,11 @@ namespace Bell.PPS.Database.Shared
 
         public bool TryGetConnection(string connectionString, out DbConnection connection)
         {
-            bool found = false;
             lock (this.SyncRoot)
             {
                 CheckDisposed();
-                found = _connections.TryGetValue(connectionString, out connection);
-                var currTran = Transaction.Current;
-                if (found && (currTran == null || currTran.TransactionInformation.Status != TransactionStatus.Active))
-                {
-                    DbConnection tmp;
-                    _connections.TryRemove(connectionString, out tmp);
-                    connection.Dispose();
-                    connection = null;
-                    found = false;
-                }
+                return _connections.TryGetValue(connectionString, out connection);
             }
-            return found;
         }
 
         public DbConnection GetConnection(DbProviderFactory factory, string connectionString)
