@@ -288,11 +288,13 @@ namespace Bell.PPS.Database.Shared
                 {
                     if (result.State == ConnectionState.Closed)
                         result.Open();
-                    return result;
                 }
+                _namedlocker.RemoveLock(id);
+                return result;
             }
             catch
             {
+                _namedlocker.RemoveLock(id);
                 TryRemoveConnection(result);
                 throw;
             }
