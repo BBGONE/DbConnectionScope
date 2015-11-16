@@ -6,7 +6,6 @@ using System.Transactions;
 using System.Runtime.Remoting.Messaging;
 using System.Threading.Tasks;
 using System.Linq;
-using System.Threading;
 using System.Runtime.CompilerServices;
 
 namespace Bell.PPS.Database.Shared
