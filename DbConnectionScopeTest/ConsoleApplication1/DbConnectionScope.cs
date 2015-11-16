@@ -6,6 +6,7 @@ using System.Transactions;
 using System.Runtime.Remoting.Messaging;
 using System.Threading.Tasks;
 using System.Linq;
+using System.Threading;
 
 namespace Bell.PPS.Database.Shared
 {
@@ -44,12 +45,47 @@ namespace Bell.PPS.Database.Shared
     //      ... finish setting up command and execute it
     //  }
 
+  
+  
     /// <summary>
     /// Class to assist in managing connection lifetimes inside scopes on a particular thread.
     /// </summary>
     public sealed class DbConnectionScope : IDisposable
     {
         private static readonly string SLOT_KEY = Guid.NewGuid().ToString();
+        private static readonly NamedLocker _namedlocker = new NamedLocker();
+
+        private class NamedLocker
+        {
+            private readonly ConcurrentDictionary<string, object> _lockDict = new ConcurrentDictionary<string, object>();
+
+            //get a lock for use with a lock(){} block
+            public object GetLock(string name)
+            {
+                return _lockDict.GetOrAdd(name, s => new object());
+            }
+
+            //run a short lock inline using a lambda
+            public TResult RunWithLock<TResult>(string name, Func<TResult> body)
+            {
+                lock (_lockDict.GetOrAdd(name, s => new object()))
+                    return body();
+            }
+
+            //run a short lock inline using a lambda
+            public void RunWithLock(string name, Action body)
+            {
+                lock (_lockDict.GetOrAdd(name, s => new object()))
+                    body();
+            }
+
+            //remove an old lock object that is no longer needed
+            public void RemoveLock(string name)
+            {
+                object o;
+                _lockDict.TryRemove(name, out o);
+            }
+        }
 
 #if TEST
         //For Testing Purposes
@@ -171,43 +207,95 @@ namespace Bell.PPS.Database.Shared
         {
             lock (this.SyncRoot)
             {
-                CheckDisposed();
-                return _connections.TryGetValue(connectionString, out connection);
+                string id = GetConnectionID(connectionString);
+                return TryGetConnectionById(id, out connection);
             }
+        }
+
+        private bool TryGetConnectionById(string id, out DbConnection connection)
+        {
+            connection = null;
+            lock (this.SyncRoot)
+            {
+                CheckDisposed();
+                return _connections.TryGetValue(id, out connection);
+            }
+        }
+
+        private bool TryRemoveConnection(DbConnection connection)
+        {
+            lock (this.SyncRoot)
+            {
+                CheckDisposed();
+                string key = string.Empty;
+                foreach (var kvp in _connections)
+                {
+                    if (Object.ReferenceEquals(kvp.Value, connection))
+                    {
+                        key = kvp.Key;
+                        break;
+                    }
+                }
+                if (!string.IsNullOrEmpty(key)){
+                    DbConnection tmp;
+                    return _connections.TryRemove(key, out tmp);
+                }
+                return false;
+            }
+        }
+
+        private static string GetConnectionID(string connectionString)
+        {
+            string transId = string.Empty;
+            var currTran = Transaction.Current;
+            if (currTran != null)
+            {
+               transId =  currTran.TransactionInformation.LocalIdentifier;
+            }
+            return string.Format("{0}:{1}", transId, connectionString);
+        }
+
+        private DbConnection GetConnectionInternal(DbProviderFactory factory, string connectionString, out string id)
+        {
+            DbConnection result = null;
+            id = null;
+            lock (this.SyncRoot)
+            {
+                id = GetConnectionID(connectionString);
+                if (!TryGetConnectionById(id, out result))
+                {
+                    result = factory.CreateConnection();
+                    result.ConnectionString = connectionString;
+                    _connections.TryAdd(id, result);
+                }
+            }
+            return result;
         }
 
         public DbConnection GetConnection(DbProviderFactory factory, string connectionString)
         {
-            DbConnection result = null;
-            lock (this.SyncRoot)
-            {
-                if (!TryGetConnection(connectionString, out result))
-                {
-                    result = factory.CreateConnection();
-                    result.ConnectionString = connectionString;
-                    _connections.TryAdd(connectionString, result);
-                }
-            }
-
-            return result;
+            string id;
+            return GetConnectionInternal(factory, connectionString, out id);
         }
 
         public DbConnection GetOpenConnection(DbProviderFactory factory, string connectionString)
         {
-            DbConnection result = this.GetConnection(factory, connectionString);
-            // however we got it, open it if it's closed.
-            //  note: don't open unless state is unambiguous that it's ok to open
-            if (result.State == ConnectionState.Closed)
-                result.Open();
-            return result;
-        }
-
-        public async Task<DbConnection> GetOpenConnectionAsync(DbProviderFactory factory, string connectionString)
-        {
-            DbConnection result = this.GetConnection(factory, connectionString);
-            if (result.State == ConnectionState.Closed)
-                await result.OpenAsync();
-            return result;
+            string id;
+            DbConnection result = this.GetConnectionInternal(factory, connectionString, out id);
+            try
+            {
+                lock (_namedlocker.GetLock(id))
+                {
+                    if (result.State == ConnectionState.Closed)
+                        result.Open();
+                    return result;
+                }
+            }
+            catch
+            {
+                TryRemoveConnection(result);
+                throw;
+            }
         }
 
         public bool IsDisposed

@@ -30,11 +30,12 @@ namespace ConsoleApplication1
             using (DbConnectionScope scope = new DbConnectionScope(DbConnectionScopeOption.Required))
             {
                 Console.WriteLine("Starting On Thread: {0}", Thread.CurrentThread.ManagedThreadId);
-                var conn1 = await GetSqlConnectionAsync();
+                var conn1 = GetSqlConnection();
                 await Task.WhenAll(Enumerable.Range(1, 3).Select(i => FirstAsync(i, 100 * i)));
                 var conn2 = GetSqlConnection();
                 Console.WriteLine("Ending On Thread: {0}, Test Passed: {1}", Thread.CurrentThread.ManagedThreadId, Object.ReferenceEquals(conn1, conn2));
                 Console.WriteLine("Before Scope End: DbConnectionScope.GetScopeStoreCount()== {0}",  DbConnectionScope.GetScopeStoreCount());
+                transactionScope.Complete();
             }
             Console.WriteLine("After Scope End: DbConnectionScope.GetScopeStoreCount()== {0}", DbConnectionScope.GetScopeStoreCount());
         }
@@ -43,7 +44,7 @@ namespace ConsoleApplication1
             var bytes = await Task.Run(() =>
             {
                 byte[] res = new byte[0];
-                for (int i = 0; i < 100000; ++i)
+                for (int i = 0; i < 10000; ++i)
                 {
                     var str = Guid.NewGuid().ToString();
                     res = System.Text.Encoding.UTF8.GetBytes(str);
@@ -57,9 +58,11 @@ namespace ConsoleApplication1
         {
             await Task.Run(async () =>
             {
+                using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Required, TransactionScopeAsyncFlowOption.Enabled))
                 using (DbConnectionScope scope = new DbConnectionScope(DbConnectionScopeOption.Required))
                 {
-                    await WaitAndWriteAsync(0, expected_conn, true);
+                    await WaitAndWriteAsync(0, expected_conn, true, "CTask");
+                    transactionScope.Complete();
                 }
             });
         }
@@ -70,42 +73,55 @@ namespace ConsoleApplication1
             {
                 var bytes = await CPU_TASK();
                 var conn = GetSqlConnection();
-                await WaitAndWriteAsync(wait, conn, true).ConfigureAwait(false);
+                await WaitAndWriteAsync(wait, conn, true, "first").ConfigureAwait(false);
 
                 using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.RequiresNew, TransactionScopeAsyncFlowOption.Enabled))
                 using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.Required))
                 {
-                    Task[] tasks = { WaitAndWriteAsync(wait, conn, true), WaitAndWriteAsync(wait, conn, true), CPU_TASK(), CONNECTION_TASK(conn), CONNECTION_TASK(conn) };
+                    var localConn = GetSqlConnection();
+                    Task[] tasks = { WaitAndWriteAsync(wait, conn, false, "tran1"), WaitAndWriteAsync(wait, conn, false, "tran2"), CPU_TASK(), CONNECTION_TASK(localConn), CONNECTION_TASK(localConn) };
                     await Task.WhenAll(tasks).ConfigureAwait(false);
+                    transactionScope.Complete();
                 }
 
                 using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.RequiresNew, TransactionScopeAsyncFlowOption.Enabled))
                 using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.RequiresNew))
                 {
-                    await WaitAndWriteAsync(wait, conn, false).ConfigureAwait(false);
+                    await WaitAndWriteAsync(wait, conn, false, "new1").ConfigureAwait(false);
+                    transactionScope.Complete();
                 }
             }
         }
 
-        static async Task WaitAndWriteAsync(int waitAmount, SqlConnection expectedConn, bool ShouldBeEqual)
+        static async Task WaitAndWriteAsync(int waitAmount, SqlConnection expectedConn, bool ShouldBeEqual, string state= "")
         {
             var bytes = await CPU_TASK();
-            SqlCommand cmd = new SqlCommand("SELECT TOP 1 [ProductID] FROM [SalesLT].[Product] ORDER BY NewID()");
-            var localConn = await GetSqlConnectionAsync();
+            //string sql = "SELECT TOP 1 [ProductID] FROM [SalesLT].[Product] ORDER BY NewID()";
+            string sql = "select transaction_id from sys.dm_tran_current_transaction";
+            SqlCommand cmd = new SqlCommand(sql);
+            var localConn = GetSqlConnection();
             cmd.Connection = localConn;
             bool isTheyEqual = Object.ReferenceEquals(expectedConn, localConn);
-            object res = await cmd.ExecuteScalarAsync().ConfigureAwait(false);
+            object res = null;
+            try
+            {
+                res = await cmd.ExecuteScalarAsync().ConfigureAwait(false);
+            }
+            catch(Exception ex)
+            {
+                Console.WriteLine(state + " "+ ex.Message);
+            }
 
-            Console.WriteLine("Thread: {0}, CmdResult: {1}, IsRecursive: {2}, Test Passed: {3}", Thread.CurrentThread.ManagedThreadId, res, waitAmount==0, (isTheyEqual == ShouldBeEqual));
-
+            Console.WriteLine("Thread: {0}, CmdResult: {1}, Test Passed: {2}, state: {3}", Thread.CurrentThread.ManagedThreadId, res, (isTheyEqual == ShouldBeEqual), state);
             if (waitAmount > 0)
             {
                 //Recursive CALL
                 await Task.Delay(waitAmount);
                 using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.RequiresNew, TransactionScopeAsyncFlowOption.Enabled))
-                using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.RequiresNew))
+                using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.Required))
                 {
-                    await WaitAndWriteAsync(0, localConn, false);
+                    await WaitAndWriteAsync(0, localConn, false, "recurse");
+                    transactionScope.Complete();
                 } 
             }
         }
@@ -116,21 +132,6 @@ namespace ConsoleApplication1
             try
             {
                 cn = (SqlConnection)DbConnectionScope.Current.GetOpenConnection(SqlClientFactory.Instance, connectionString1);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-                throw;
-            }
-            return cn;
-        }
-
-        public async static Task<SqlConnection> GetSqlConnectionAsync()
-        {
-            SqlConnection cn= null;
-            try
-            {
-                cn = (SqlConnection) await DbConnectionScope.Current.GetOpenConnectionAsync(SqlClientFactory.Instance, connectionString1);
             }
             catch (Exception ex)
             {
