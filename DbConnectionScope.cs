@@ -106,19 +106,14 @@ namespace Bell.PPS.Database.Shared
         private readonly object SyncRoot = new object();
         private DbConnectionScope _outerScope;
         private ConcurrentDictionary<string, DbConnection> _connections;
-        private bool _isDisposed; 
+        private bool _isDisposed;
+        private string _transId;
 #endregion
 
 #region class methods and properties
         private static string GetConnectionID(string connectionString)
         {
-            string transId = string.Empty;
-            var currTran = Transaction.Current;
-            if (currTran != null)
-            {
-                transId = currTran.TransactionInformation.LocalIdentifier;
-            }
-            return string.Format("{0}:{1}", transId, connectionString);
+            return connectionString;
         }
 
         /// <summary>
@@ -149,22 +144,37 @@ namespace Bell.PPS.Database.Shared
         public DbConnectionScope(DbConnectionScopeOption option)
         {
             _isDisposed = true;  // short circuit Dispose until we're properly set up
-            if (option == DbConnectionScopeOption.RequiresNew || (option == DbConnectionScopeOption.Required && CallContext.LogicalGetData(SLOT_KEY) == null))
+            string currTransId = string.Empty;
+            var currTran = Transaction.Current;
+            if (currTran != null)
             {
-                // only bother allocating dictionary if we're going to push
-                _connections = new ConcurrentDictionary<string, DbConnection>();
-
-                // Devnote:  Order of initial assignment is important in cases of failure!
-                //  _priorScope first makes sure we know who we need to restore
-                //  _isDisposed second, to make sure we no-op dispose until we're as close to
-                //   correct setup as possible (i.e. all other instance fields set prior to _isDisposed = false)
-                //  __currentScope last, to make sure the thread static only holds validly set up objects
-                _outerScope = __currentScope;
-                __currentScope = this;
-                if (__scopeStore.TryAdd(this.UNIQUE_ID, new WeakReference<DbConnectionScope>(this)))
+                currTransId = currTran.TransactionInformation.LocalIdentifier;
+            }
+            var outerScope = __currentScope;
+            try {
+                if (option == DbConnectionScopeOption.RequiresNew || (option == DbConnectionScopeOption.Required && (outerScope == null || outerScope._transId != currTransId)))
                 {
-                    _isDisposed = false;
+                    // only bother allocating dictionary if we're going to push
+                    _connections = new ConcurrentDictionary<string, DbConnection>();
+                    _transId = currTransId;
+
+                    // Devnote:  Order of initial assignment is important in cases of failure!
+                    //  _priorScope first makes sure we know who we need to restore
+                    //  _isDisposed second, to make sure we no-op dispose until we're as close to
+                    //   correct setup as possible (i.e. all other instance fields set prior to _isDisposed = false)
+                    //  __currentScope last, to make sure the thread static only holds validly set up objects
+                    _outerScope = outerScope;
+                    __currentScope = this;
+                    if (__scopeStore.TryAdd(this.UNIQUE_ID, new WeakReference<DbConnectionScope>(this)))
+                    {
+                        _isDisposed = false;
+                    }
                 }
+            }
+            finally
+            {
+                if (_isDisposed)
+                    __currentScope = outerScope;
             }
         }
 
