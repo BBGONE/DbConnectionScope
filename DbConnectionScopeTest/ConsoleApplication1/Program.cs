@@ -2,14 +2,13 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Transactions;
 
 namespace ConsoleApplication1
 {
     class Program
     {
-
-
-        private static string connectionString = "Data Source=.;Initial Catalog=AdventureWorksLT2012;Integrated Security=SSPI;MultipleActiveResultSets=True";
+        private static string connectionString = "Data Source=.;Initial Catalog=AdventureWorksLT2012;Integrated Security=SSPI;MultipleActiveResultSets=True;";
 
         static void Main(string[] args)
         {
@@ -18,18 +17,22 @@ namespace ConsoleApplication1
                 //Just to Complicate Testing 
                 TaskCompletionSource<object> tcs = new TaskCompletionSource<object>();
                 int cnt = 3;
-                for (int i = 0; i < cnt; ++i)
+                using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.RequiresNew, TransactionScopeAsyncFlowOption.Enabled))
+                using (DbConnectionScope scope = new DbConnectionScope(DbConnectionScopeOption.Required))
                 {
-                    ThreadPool.QueueUserWorkItem((state) =>
+                    for (int i = 0; i < cnt; ++i)
                     {
-                        var task = DbConnectionScopeTest.Start(connectionString);
-                        task.Wait(60000);
-                        var res = Interlocked.Decrement(ref cnt);
-                        if (res == 0)
-                            tcs.SetResult(null);
-                    });
+                        Task.Run(async () =>
+                        {
+                            var task = DbConnectionScopeTest.Start(connectionString);
+                            await task;
+                            var res = Interlocked.Decrement(ref cnt);
+                            if (res == 0)
+                                tcs.SetResult(null);
+                        });
+                    }
+                    tcs.Task.Wait(60000);
                 }
-                tcs.Task.Wait(60000);
                 Console.WriteLine("After End: DbConnectionScope.GetScopeStoreCount()== {0}", DbConnectionScope.GetScopeStoreCount());
             }
             catch (AggregateException aex)

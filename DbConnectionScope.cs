@@ -54,7 +54,7 @@ namespace Bell.PPS.Database.Shared
     {
         private static readonly string SLOT_KEY = Guid.NewGuid().ToString();
 #if TEST
-        //For Testing Purposes
+        //Just for Testing Purposes
         public static int GetScopeStoreCount() {
             return __scopeStore.Count;
         }
@@ -97,6 +97,8 @@ namespace Bell.PPS.Database.Shared
                     CallContext.FreeNamedDataSlot(SLOT_KEY);
             }
         }
+
+        private static ConditionalWeakTable<DbConnection, Task<DbConnection>> __openAsyncTasks =  new ConditionalWeakTable<DbConnection, Task<DbConnection>>();
 #endregion
 
 #region instance fields
@@ -104,7 +106,6 @@ namespace Bell.PPS.Database.Shared
         private readonly object SyncRoot = new object();
         private DbConnectionScope _outerScope;
         private ConcurrentDictionary<string, DbConnection> _connections;
-        private Lazy<ConditionalWeakTable<DbConnection, Task<DbConnection>>> _openAsyncTasks = new Lazy<ConditionalWeakTable<DbConnection, Task<DbConnection>>>(() => { return new ConditionalWeakTable<DbConnection, Task<DbConnection>>(); }, true);
         private bool _isDisposed; 
 #endregion
 
@@ -201,8 +202,16 @@ namespace Bell.PPS.Database.Shared
             {
                 lock (result)
                 {
-                    if (result.State == ConnectionState.Closed)
-                        result.Open();
+                    Task<DbConnection> openAsyncTask;
+                    if (__openAsyncTasks.TryGetValue(result, out openAsyncTask))
+                    {
+                        openAsyncTask.Wait();
+                    }
+                    else
+                    {
+                        if (result.State == ConnectionState.Closed)
+                            result.Open();
+                    }
                 }
                 return result;
             }
@@ -219,9 +228,8 @@ namespace Bell.PPS.Database.Shared
             DbConnection result = this.GetConnectionInternal(factory, connectionString, out id);
             lock (result)
             {
-                var openAsyncTasks = this._openAsyncTasks.Value;
                 Task<DbConnection> openAsyncTask;
-                if (openAsyncTasks.TryGetValue(result, out openAsyncTask))
+                if (__openAsyncTasks.TryGetValue(result, out openAsyncTask))
                 {
                     return openAsyncTask;
                 }
@@ -260,13 +268,13 @@ namespace Bell.PPS.Database.Shared
                             {
                                 if (!_isDisposed)
                                 {
-                                    this._openAsyncTasks.Value.Remove(result);
+                                    __openAsyncTasks.Remove(result);
                                 }
                             }
                         }
                     });
                     openAsyncTask = tcs.Task;
-                    openAsyncTasks.Add(result, openAsyncTask);
+                    __openAsyncTasks.Add(result, openAsyncTask);
                     return openAsyncTask;
                 }
                 else
@@ -366,7 +374,6 @@ namespace Bell.PPS.Database.Shared
                     finally
                     {
                         _isDisposed = true;
-                        _openAsyncTasks = null;
                         if (_connections != null)
                         {
                             var connections = _connections.Values.ToArray();
