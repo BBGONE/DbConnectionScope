@@ -187,7 +187,7 @@ namespace ConsoleApplication1
                 using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Suppress, TransactionScopeAsyncFlowOption.Enabled))
                 using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.RequiresNew))
                 {
-                    await WaitAndWriteAsync(level + 1, state + "-recurse2:" + level, topConnection);
+                    await WaitAndWriteAsync(nextLevel, state + "-recurse2:" + nextLevel, topConnection);
                     transactionScope.Complete();
                 } 
             }
