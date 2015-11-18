@@ -9,30 +9,23 @@ namespace ConsoleApplication1
     class Program
     {
         private static string connectionString = "Data Source=.;Initial Catalog=AdventureWorksLT2012;Integrated Security=SSPI;MultipleActiveResultSets=True;";
-
+        
         static void Main(string[] args)
         {
             try
             {
                 //Just to Complicate Testing 
                 TaskCompletionSource<object> tcs = new TaskCompletionSource<object>();
-                int cnt = 3;
-                using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.RequiresNew, TransactionScopeAsyncFlowOption.Enabled))
-                using (DbConnectionScope scope = new DbConnectionScope(DbConnectionScopeOption.Required))
+                int cnt = 1;
+                Task.Run(async () =>
                 {
-                    for (int i = 0; i < cnt; ++i)
-                    {
-                        Task.Run(async () =>
-                        {
-                            var task = DbConnectionScopeTest.Start(connectionString);
-                            await task;
-                            var res = Interlocked.Decrement(ref cnt);
-                            if (res == 0)
-                                tcs.SetResult(null);
-                        });
-                    }
-                    tcs.Task.Wait(60000);
-                }
+                    var task = DbConnectionScopeTest.Start(connectionString);
+                    await task;
+                    var res = Interlocked.Decrement(ref cnt);
+                    if (res == 0)
+                        tcs.SetResult(null);
+                });
+                tcs.Task.Wait(60000);
                 Console.WriteLine("After End: DbConnectionScope.GetScopeStoreCount()== {0}", DbConnectionScope.GetScopeStoreCount());
             }
             catch (AggregateException aex)

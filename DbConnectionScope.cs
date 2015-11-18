@@ -105,9 +105,10 @@ namespace Bell.PPS.Database.Shared
         internal readonly Guid UNIQUE_ID = Guid.NewGuid();
         private readonly object SyncRoot = new object();
         private DbConnectionScope _outerScope;
-        private ConcurrentDictionary<string, DbConnection> _connections;
-        private bool _isDisposed;
         private string _transId;
+        private DbConnectionScopeOption _option;
+        private Lazy<ConcurrentDictionary<string, DbConnection>> _connections;
+        private bool _isDisposed;
 #endregion
 
 #region class methods and properties
@@ -129,11 +130,12 @@ namespace Bell.PPS.Database.Shared
 
 #endregion
 
-#region public instance methods and properties
+#region constructor annd destructor
         /// <summary>
         /// Default Constructor
         /// </summary>
-        public DbConnectionScope() : this(DbConnectionScopeOption.Required)
+        public DbConnectionScope()
+            : this(DbConnectionScopeOption.Required)
         {
         }
 
@@ -150,12 +152,17 @@ namespace Bell.PPS.Database.Shared
             {
                 currTransId = currTran.TransactionInformation.LocalIdentifier;
             }
-            var outerScope = __currentScope;
-            if (option == DbConnectionScopeOption.RequiresNew || (option == DbConnectionScopeOption.Required && (outerScope == null || outerScope._transId != currTransId)))
+            this._transId = currTransId;
+            this._option = option;
+            this._outerScope = null;
+
+            DbConnectionScope outerScope = __currentScope;
+            bool isAllocateOk = (outerScope == null || outerScope._transId != this._transId);
+            if (option == DbConnectionScopeOption.RequiresNew ||
+               (option == DbConnectionScopeOption.Required && isAllocateOk))
             {
                 // only bother allocating dictionary if we're going to push
-                _connections = new ConcurrentDictionary<string, DbConnection>();
-                _transId = currTransId;
+                _connections = new Lazy<ConcurrentDictionary<string,DbConnection>>(()=> new ConcurrentDictionary<string,DbConnection>(), true);
 
                 // Devnote:  Order of initial assignment is important in cases of failure!
                 if (__scopeStore.TryAdd(this.UNIQUE_ID, new WeakReference<DbConnectionScope>(this)))
@@ -171,7 +178,9 @@ namespace Bell.PPS.Database.Shared
         {
             Dispose(false);
         }
+#endregion
 
+#region public instance methods and properties
         public void Dispose()
         {
             Dispose(true);
@@ -282,7 +291,12 @@ namespace Bell.PPS.Database.Shared
                 }
             }
         }
-        #endregion
+
+        public DbConnectionScopeOption Option
+        {
+            get { return _option; }
+        }
+#endregion
 
 #region private methods and properties
         private DbConnection GetConnectionInternal(DbProviderFactory factory, string connectionString, out string id)
@@ -292,14 +306,55 @@ namespace Bell.PPS.Database.Shared
             lock (this.SyncRoot)
             {
                 id = GetConnectionID(connectionString);
-                if (!TryGetConnectionById(id, out result))
+                if (!this.TryGetConnectionById(this, id, out result))
                 {
                     result = factory.CreateConnection();
                     result.ConnectionString = connectionString;
-                    _connections.TryAdd(id, result);
+                    _connections.Value.TryAdd(id, result);
                 }
             }
             return result;
+        }
+
+        /// <summary>
+        /// In case of DbConnectionScopeOption equals Required  
+        /// it returns outer scope with the same transaction id on the scope
+        /// typically it will be when TransactionScopeOption is Suppress on this scope and the outer scope
+        /// </summary>
+        /// <param name="resultScope"></param>
+        /// <returns></returns>
+        private bool TryGetCompatableScope(out DbConnectionScope resultScope)
+        {
+            resultScope = null;
+            if (this._option == DbConnectionScopeOption.RequiresNew)
+                return false;
+            resultScope = this._outerScope;
+            while (resultScope != null)
+            {
+                //find the outer scope with the same transaction id
+                if (!resultScope._isDisposed && resultScope._transId == this._transId)
+                    break;
+                else
+                    resultScope = resultScope._outerScope;
+            }
+            return resultScope != null;
+        }
+
+        private bool TryGetConnectionById(DbConnectionScope scope, string id, out DbConnection connection)
+        {
+            connection = null;
+            if (scope.TryGetConnectionById(id, out connection))
+            {
+                return true;
+            }
+            else if (scope.TryGetCompatableScope(out scope))
+            {
+                if (this.TryGetConnectionById(scope, id, out connection))
+                    return true;
+                else
+                    return false;
+            }
+            return false;
         }
 
         private bool TryGetConnectionById(string id, out DbConnection connection)
@@ -308,7 +363,9 @@ namespace Bell.PPS.Database.Shared
             lock (this.SyncRoot)
             {
                 CheckDisposed();
-                return _connections.TryGetValue(id, out connection);
+                if (!_connections.IsValueCreated)
+                    return false;
+                return _connections.Value.TryGetValue(id, out connection);
             }
         }
 
@@ -316,9 +373,12 @@ namespace Bell.PPS.Database.Shared
         {
             lock (this.SyncRoot)
             {
+                if (!_connections.IsValueCreated)
+                    return false;
                 CheckDisposed();
                 string key = string.Empty;
-                foreach (var kvp in _connections)
+                var connections = _connections.Value;
+                foreach (var kvp in connections)
                 {
                     if (Object.ReferenceEquals(kvp.Value, connection))
                     {
@@ -329,7 +389,7 @@ namespace Bell.PPS.Database.Shared
                 if (!string.IsNullOrEmpty(key))
                 {
                     DbConnection tmp;
-                    if (_connections.TryRemove(key, out tmp))
+                    if (connections.TryRemove(key, out tmp))
                     {
                         tmp.Dispose();
                         return true;
@@ -373,11 +433,10 @@ namespace Bell.PPS.Database.Shared
                     finally
                     {
                         _isDisposed = true;
-                        if (_connections != null)
+                        if (_connections.IsValueCreated)
                         {
-                            var connections = _connections.Values.ToArray();
-                            _connections.Clear();
-                            _connections = null;
+                            var connections = _connections.Value.Values.ToArray();
+                            _connections.Value.Clear();
                             foreach (DbConnection connection in connections)
                             {
                                 if (connection.State != ConnectionState.Closed)
