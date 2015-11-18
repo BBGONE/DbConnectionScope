@@ -85,8 +85,9 @@ namespace ConsoleApplication1
                 Task[] tasks1 = {  CPU_TASK(), WaitAndWriteAsync(0, "firstTask", topConnection)};
                 await Task.WhenAll(tasks1).ConfigureAwait(false);
                 bytes = (tasks1[0] as Task<byte[]>).Result;
+                var executedOnConnection = (tasks1[1] as Task<SqlConnection>).Result;
 
-                using (TransactionScope transactionScope1 = new TransactionScope(TransactionScopeOption.RequiresNew, TransactionScopeAsyncFlowOption.Enabled))
+                using (TransactionScope transactionScope1 = new TransactionScope(TransactionScopeOption.Required, TransactionScopeAsyncFlowOption.Enabled))
                 using (DbConnectionScope scope1 = new DbConnectionScope(DbConnectionScopeOption.Required))
                 {
                     Task[] tasks2 = { WaitAndWriteAsync(0, "tranTask1", topConnection), 
@@ -98,7 +99,10 @@ namespace ConsoleApplication1
                     bytes = (tasks2[2] as Task<byte[]>).Result;
                     var conn1 = (tasks2[0] as Task<SqlConnection>).Result;
                     var conn2 = (tasks2[1] as Task<SqlConnection>).Result;
-                    Console.WriteLine("Reusing connection test Passed: {0}, state: {1}", Object.ReferenceEquals(conn1, conn2), "Task1 and Task2");
+                    Console.WriteLine();
+                    Console.WriteLine("Reusing 2 connections result: {0}, state: {1}", Object.ReferenceEquals(conn1, conn2), "Task1 and Task2");
+                    Console.WriteLine("Reusing 3 connections result: {0}, state: {1}", Object.ReferenceEquals(conn1, conn2) && Object.ReferenceEquals(conn1, executedOnConnection), "Task1 and Task2 and firstTask");
+                    Console.WriteLine();
 
                     using (TransactionScope transactionScope2 = new TransactionScope(TransactionScopeOption.Required, TransactionScopeAsyncFlowOption.Enabled))
                     using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.Required))
@@ -145,7 +149,9 @@ namespace ConsoleApplication1
                 bool isEqual = Object.ReferenceEquals(topConnection, localConn);
                 bool IsMustBeEqual = currScope.Option == DbConnectionScopeOption.Required;
                 bool isTestPassed = isEqual == IsMustBeEqual;
+                Console.WriteLine();
                 Console.WriteLine("Reusing connection test Passed: {0}, state: {1}", isTestPassed, state);
+                Console.WriteLine();
             }
         
             object res = null;
@@ -173,21 +179,21 @@ namespace ConsoleApplication1
                 using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Required, TransactionScopeAsyncFlowOption.Enabled))
                 using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.Required))
                 {
-                    await WaitAndWriteAsync(nextLevel, state + "-transRecurse:" + nextLevel, topConnection);
+                    var executedOnConnection1 = await WaitAndWriteAsync(nextLevel, state + "-transRecurse:" + nextLevel, topConnection);
                     transactionScope.Complete();
                 }
 
                 using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Suppress, TransactionScopeAsyncFlowOption.Enabled))
                 using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.Required))
                 {
-                    await WaitAndWriteAsync(nextLevel, state + "-recurse1:" + nextLevel, topConnection);
+                    var executedOnConnection2 = await WaitAndWriteAsync(nextLevel, state + "-recurse1:" + nextLevel, topConnection);
                     transactionScope.Complete();
                 }
 
                 using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Suppress, TransactionScopeAsyncFlowOption.Enabled))
                 using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.RequiresNew))
                 {
-                    await WaitAndWriteAsync(nextLevel, state + "-recurse2:" + nextLevel, topConnection);
+                    var executedOnConnection3 = await WaitAndWriteAsync(nextLevel, state + "-recurse2:" + nextLevel, topConnection);
                     transactionScope.Complete();
                 } 
             }
