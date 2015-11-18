@@ -305,6 +305,7 @@ namespace Bell.PPS.Database.Shared
             id = null;
             lock (this.SyncRoot)
             {
+                this.CheckDisposed();
                 id = GetConnectionID(connectionString);
                 if (!this.TryGetConnectionById(this, id, out result))
                 {
@@ -373,9 +374,10 @@ namespace Bell.PPS.Database.Shared
         {
             lock (this.SyncRoot)
             {
+                if (this._isDisposed)
+                    return false;
                 if (!_connections.IsValueCreated)
                     return false;
-                CheckDisposed();
                 string key = string.Empty;
                 var connections = _connections.Value;
                 foreach (var kvp in connections)
@@ -418,6 +420,8 @@ namespace Bell.PPS.Database.Shared
             {
                 lock (this.SyncRoot)
                 {
+                    if (_isDisposed)
+                        return;
                     DbConnectionScope outerScope = _outerScope;
                     while (outerScope != null && outerScope._isDisposed)
                     {
