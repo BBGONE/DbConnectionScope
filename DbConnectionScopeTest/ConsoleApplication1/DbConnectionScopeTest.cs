@@ -69,7 +69,7 @@ namespace ConsoleApplication1
         {
             using (DbConnectionScope scope = new DbConnectionScope(DbConnectionScopeOption.Required))
             {
-                using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.RequiresNew, TransactionScopeAsyncFlowOption.Enabled))
+                using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Required, TransactionScopeAsyncFlowOption.Enabled))
                 using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.Required))
                 {
                     Task[] tasks = { CheckOpenConnectionState(true), CheckOpenConnectionState(true), CheckOpenConnectionState(false), CheckOpenConnectionState(false) };
@@ -137,10 +137,10 @@ namespace ConsoleApplication1
             {
                 //Recursive CALL
                 //await Task.Delay(waitAmount);
-                using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.RequiresNew, TransactionScopeAsyncFlowOption.Enabled))
+                using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Required, TransactionScopeAsyncFlowOption.Enabled))
                 using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.Required))
                 {
-                    await WaitAndWriteAsync(0, "recurse");
+                    await WaitAndWriteAsync(0, state + "- recurse");
                     transactionScope.Complete();
                 } 
             }

@@ -151,30 +151,19 @@ namespace Bell.PPS.Database.Shared
                 currTransId = currTran.TransactionInformation.LocalIdentifier;
             }
             var outerScope = __currentScope;
-            try {
-                if (option == DbConnectionScopeOption.RequiresNew || (option == DbConnectionScopeOption.Required && (outerScope == null || outerScope._transId != currTransId)))
-                {
-                    // only bother allocating dictionary if we're going to push
-                    _connections = new ConcurrentDictionary<string, DbConnection>();
-                    _transId = currTransId;
-
-                    // Devnote:  Order of initial assignment is important in cases of failure!
-                    //  _priorScope first makes sure we know who we need to restore
-                    //  _isDisposed second, to make sure we no-op dispose until we're as close to
-                    //   correct setup as possible (i.e. all other instance fields set prior to _isDisposed = false)
-                    //  __currentScope last, to make sure the thread static only holds validly set up objects
-                    _outerScope = outerScope;
-                    __currentScope = this;
-                    if (__scopeStore.TryAdd(this.UNIQUE_ID, new WeakReference<DbConnectionScope>(this)))
-                    {
-                        _isDisposed = false;
-                    }
-                }
-            }
-            finally
+            if (option == DbConnectionScopeOption.RequiresNew || (option == DbConnectionScopeOption.Required && (outerScope == null || outerScope._transId != currTransId)))
             {
-                if (_isDisposed)
-                    __currentScope = outerScope;
+                // only bother allocating dictionary if we're going to push
+                _connections = new ConcurrentDictionary<string, DbConnection>();
+                _transId = currTransId;
+
+                // Devnote:  Order of initial assignment is important in cases of failure!
+                if (__scopeStore.TryAdd(this.UNIQUE_ID, new WeakReference<DbConnectionScope>(this)))
+                {
+                    _outerScope = outerScope;
+                    _isDisposed = false;
+                    __currentScope = this;
+                }
             }
         }
 
