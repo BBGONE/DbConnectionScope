@@ -203,6 +203,25 @@ namespace Bell.PPS.Database.Shared
 
         public DbConnection GetOpenConnection(IDbConnectionFactory factory, string connectionName)
         {
+            return this.GetOpenConnectionInternal(factory, connectionName, 0);
+        }
+
+        public Task<DbConnection> GetOpenConnectionAsync(IDbConnectionFactory factory, string connectionName)
+        {
+            return this.GetOpenConnectionAsyncInternal(factory, connectionName, 0);
+        }
+
+        public DbConnectionScopeOption Option
+        {
+            get { return _option; }
+        }
+#endregion
+
+#region private methods and properties
+        private DbConnection GetOpenConnectionInternal(IDbConnectionFactory factory, string connectionName, int level)
+        {
+            if (level > 1)
+                throw new OverflowException(string.Format("Exceeded maximum times to get open connection: {0}", connectionName));
             DbConnection result = this.GetConnection(factory, connectionName);
             try
             {
@@ -219,7 +238,7 @@ namespace Bell.PPS.Database.Shared
                             result.Open();
                         else if (result.State == ConnectionState.Broken && TryRemoveConnection(result))
                         {
-                            return GetOpenConnection(factory, connectionName);
+                            return GetOpenConnectionInternal(factory, connectionName, level+1);
                         }
                     }
                 }
@@ -232,8 +251,16 @@ namespace Bell.PPS.Database.Shared
             }
         }
 
-        public Task<DbConnection> GetOpenConnectionAsync(IDbConnectionFactory factory, string connectionName)
+        private Task<DbConnection> GetOpenConnectionAsyncInternal(IDbConnectionFactory factory, string connectionName, int level)
         {
+            if (level > 1)
+            {
+                var error = new OverflowException(string.Format("Exceeded maximum times to get open connection: {0}", connectionName));
+                TaskCompletionSource<DbConnection> tcs = new TaskCompletionSource<DbConnection>();
+                tcs.SetException(error);
+                return tcs.Task;
+            }
+         
             DbConnection result = this.GetConnection(factory, connectionName);
             lock (result)
             {
@@ -273,13 +300,7 @@ namespace Bell.PPS.Database.Shared
                         }
                         finally
                         {
-                            lock (this.SyncRoot)
-                            {
-                                if (!_isDisposed)
-                                {
-                                    __openAsyncTasks.Remove(result);
-                                }
-                            }
+                            __openAsyncTasks.Remove(result);
                         }
                     });
                     openAsyncTask = tcs.Task;
@@ -288,7 +309,7 @@ namespace Bell.PPS.Database.Shared
                 }
                 else if (result.State == ConnectionState.Broken && TryRemoveConnection(result))
                 {
-                    return GetOpenConnectionAsync(factory, connectionName);
+                    return GetOpenConnectionAsyncInternal(factory, connectionName, level+1);
                 }
                 else
                 {
@@ -297,13 +318,6 @@ namespace Bell.PPS.Database.Shared
             }
         }
 
-        public DbConnectionScopeOption Option
-        {
-            get { return _option; }
-        }
-#endregion
-
-#region private methods and properties
         /// <summary>
         /// In case of DbConnectionScopeOption equals Required  
         /// it returns outer scope with the same transaction id on the scope
