@@ -217,6 +217,10 @@ namespace Bell.PPS.Database.Shared
                     {
                         if (result.State == ConnectionState.Closed)
                             result.Open();
+                        else if (result.State == ConnectionState.Broken && TryRemoveConnection(result))
+                        {
+                            return GetOpenConnection(factory, connectionName);
+                        }
                     }
                 }
                 return result;
@@ -281,6 +285,10 @@ namespace Bell.PPS.Database.Shared
                     openAsyncTask = tcs.Task;
                     __openAsyncTasks.Add(result, openAsyncTask);
                     return openAsyncTask;
+                }
+                else if (result.State == ConnectionState.Broken && TryRemoveConnection(result))
+                {
+                    return GetOpenConnectionAsync(factory, connectionName);
                 }
                 else
                 {
@@ -349,7 +357,31 @@ namespace Bell.PPS.Database.Shared
             }
         }
 
+        /// <summary>
+        /// Removes the connection from current scope
+        /// and if not removed it tries to remove it from outer scopes
+        /// </summary>
+        /// <param name="connection"></param>
+        /// <returns></returns>
         private bool TryRemoveConnection(DbConnection connection)
+        {
+            var scope = this;
+            while (scope != null)
+            {
+                if (!scope._isDisposed && scope.TryRemoveConnectionInternal(connection))
+                    return true;
+                else
+                    scope = scope._outerScope;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Removes the connection from current scope
+        /// </summary>
+        /// <param name="connection"></param>
+        /// <returns></returns>
+        private bool TryRemoveConnectionInternal(DbConnection connection)
         {
             lock (this.SyncRoot)
             {
