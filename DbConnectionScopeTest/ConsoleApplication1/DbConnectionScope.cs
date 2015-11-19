@@ -7,6 +7,7 @@ using System.Runtime.Remoting.Messaging;
 using System.Threading.Tasks;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Threading;
 
 namespace Bell.PPS.Database.Shared
 {
@@ -21,34 +22,8 @@ namespace Bell.PPS.Database.Shared
 
     // Allows almost-automated re-use of connections across multiple call levels
     //  while still controlling connection lifetimes.  Multiple connections are supported within a single scope.
-    // To use:
-    //  Create a new connection scope object in a using statement at the level within which you 
-    //      want to scope connections.
-    //  Use Current.AddConnection() and Current.GetConnection() to store/retrieve specific connections based on your
-    //      own keys.
-    //  Simpler alternative: Use Current.GetOpenConnection(factory, connection string) where you need to use the connection
-    //
-    // Example of simple case:
-    //  void TopLevel() {
-    //      using (DbConnectionScope scope = new DbConnectionScope()) {
-    //          // Code that eventually calls LowerLevel a couple of times.
-    //          // The first time LowerLevel is called, it will allocate and open the connection
-    //          // Subsequent calls will use the already-opened connection, INCLUDING running in the same 
-    //          //   System.Transactions transaction without using DTC (assuming only one connection string)!
-    //      }
-    //  }
-    //
-    //  void LowerLevel() {
-    //      string connectionString = <...get connection string from config or somewhere...>;
-    //      SqlCommand cmd = new SqlCommand("Some TSQL code");
-    //      cmd.Connection = (SqlConnection) DbConnectionScope.Current.GetOpenConnection(SqlClientFactory.Instance, connectionString);
-    //      ... finish setting up command and execute it
-    //  }
-
-  
-  
     /// <summary>
-    /// Class to assist in managing connection lifetimes inside scopes on a particular thread.
+    /// Class to assist in managing connection lifetimes inside scopes.
     /// </summary>
     public sealed class DbConnectionScope : IDisposable
     {
@@ -112,11 +87,6 @@ namespace Bell.PPS.Database.Shared
 #endregion
 
 #region class methods and properties
-        private static string GetConnectionID(string connectionString)
-        {
-            return connectionString;
-        }
-
         /// <summary>
         /// Obtain the currently active connection scope
         /// </summary>
@@ -128,6 +98,31 @@ namespace Bell.PPS.Database.Shared
             }
         }
 
+        public static TConnection GetOpenConnection<TConnection>(IDbConnectionFactory factory, string connectionName)
+            where TConnection: DbConnection
+        {
+            return (TConnection)DbConnectionScope.Current.GetOpenConnection(factory, connectionName);
+        }
+
+        public static async Task<TConnection> GetOpenConnectionAsync<TConnection>(IDbConnectionFactory factory, string connectionName)
+            where TConnection : DbConnection
+        {
+            return (TConnection) await DbConnectionScope.Current.GetOpenConnectionAsync(factory, connectionName);
+        }
+
+        private static string CurrentTransactionId
+        {
+            get
+            {
+                string currTransId = string.Empty;
+                var currTran = Transaction.Current;
+                if (currTran != null)
+                {
+                    currTransId = currTran.TransactionInformation.LocalIdentifier;
+                }
+                return currTransId;
+            }
+        }
 #endregion
 
 #region constructor annd destructor
@@ -146,13 +141,7 @@ namespace Bell.PPS.Database.Shared
         public DbConnectionScope(DbConnectionScopeOption option)
         {
             _isDisposed = true;  // short circuit Dispose until we're properly set up
-            string currTransId = string.Empty;
-            var currTran = Transaction.Current;
-            if (currTran != null)
-            {
-                currTransId = currTran.TransactionInformation.LocalIdentifier;
-            }
-            this._transId = currTransId;
+            this._transId = CurrentTransactionId;
             this._option = option;
             this._outerScope = null;
 
@@ -187,25 +176,34 @@ namespace Bell.PPS.Database.Shared
             GC.SuppressFinalize(this);
         }
 
-        public bool TryGetConnection(string connectionString, out DbConnection connection)
+        public bool TryGetConnection(string connectionName, out DbConnection connection)
         {
+            this.CheckTransaction();
             lock (this.SyncRoot)
             {
-                string id = GetConnectionID(connectionString);
-                return TryGetConnectionById(id, out connection);
+                return TryGetConnectionByName(connectionName, out connection);
             }
         }
 
-        public DbConnection GetConnection(DbProviderFactory factory, string connectionString)
+        public DbConnection GetConnection(IDbConnectionFactory factory, string connectionName)
         {
-            string id;
-            return GetConnectionInternal(factory, connectionString, out id);
+            this.CheckTransaction();
+            DbConnection result = null;
+
+            lock (this.SyncRoot)
+            {
+                if (!this.TryGetConnectionByName(this, connectionName, out result))
+                {
+                    result = factory.CreateConnection(connectionName);
+                    _connections.Value.TryAdd(connectionName, result);
+                }
+            }
+            return result;
         }
 
-        public DbConnection GetOpenConnection(DbProviderFactory factory, string connectionString)
+        public DbConnection GetOpenConnection(IDbConnectionFactory factory, string connectionName)
         {
-            string id;
-            DbConnection result = this.GetConnectionInternal(factory, connectionString, out id);
+            DbConnection result = this.GetConnection(factory, connectionName);
             try
             {
                 lock (result)
@@ -230,10 +228,9 @@ namespace Bell.PPS.Database.Shared
             }
         }
 
-        public Task<DbConnection> GetOpenConnectionAsync(DbProviderFactory factory, string connectionString)
+        public Task<DbConnection> GetOpenConnectionAsync(IDbConnectionFactory factory, string connectionName)
         {
-            string id;
-            DbConnection result = this.GetConnectionInternal(factory, connectionString, out id);
+            DbConnection result = this.GetConnection(factory, connectionName);
             lock (result)
             {
                 Task<DbConnection> openAsyncTask;
@@ -299,24 +296,6 @@ namespace Bell.PPS.Database.Shared
 #endregion
 
 #region private methods and properties
-        private DbConnection GetConnectionInternal(DbProviderFactory factory, string connectionString, out string id)
-        {
-            DbConnection result = null;
-            id = null;
-            lock (this.SyncRoot)
-            {
-                this.CheckDisposed();
-                id = GetConnectionID(connectionString);
-                if (!this.TryGetConnectionById(this, id, out result))
-                {
-                    result = factory.CreateConnection();
-                    result.ConnectionString = connectionString;
-                    _connections.Value.TryAdd(id, result);
-                }
-            }
-            return result;
-        }
-
         /// <summary>
         /// In case of DbConnectionScopeOption equals Required  
         /// it returns outer scope with the same transaction id on the scope
@@ -341,16 +320,16 @@ namespace Bell.PPS.Database.Shared
             return resultScope != null;
         }
 
-        private bool TryGetConnectionById(DbConnectionScope scope, string id, out DbConnection connection)
+        private bool TryGetConnectionByName(DbConnectionScope scope, string connectionName, out DbConnection connection)
         {
             connection = null;
-            if (scope.TryGetConnectionById(id, out connection))
+            if (scope.TryGetConnectionByName(connectionName, out connection))
             {
                 return true;
             }
             else if (scope.TryGetCompatableScope(out scope))
             {
-                if (this.TryGetConnectionById(scope, id, out connection))
+                if (this.TryGetConnectionByName(scope, connectionName, out connection))
                     return true;
                 else
                     return false;
@@ -358,7 +337,7 @@ namespace Bell.PPS.Database.Shared
             return false;
         }
 
-        private bool TryGetConnectionById(string id, out DbConnection connection)
+        private bool TryGetConnectionByName(string connectionName, out DbConnection connection)
         {
             connection = null;
             lock (this.SyncRoot)
@@ -366,7 +345,7 @@ namespace Bell.PPS.Database.Shared
                 CheckDisposed();
                 if (!_connections.IsValueCreated)
                     return false;
-                return _connections.Value.TryGetValue(id, out connection);
+                return _connections.Value.TryGetValue(connectionName, out connection);
             }
         }
 
@@ -409,6 +388,15 @@ namespace Bell.PPS.Database.Shared
             if (_isDisposed)
             {
                 throw new ObjectDisposedException("DbConnectionScope");
+            }
+        }
+
+        private void CheckTransaction()
+        {
+            string id = CurrentTransactionId;
+            if (id  != this._transId)
+            {
+                throw new InvalidOperationException("Transaction is not the same when DbConnectionScope was created");
             }
         }
 

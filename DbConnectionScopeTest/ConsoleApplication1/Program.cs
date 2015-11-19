@@ -8,18 +8,15 @@ namespace ConsoleApplication1
 {
     class Program
     {
-        private static string connectionString = "Data Source=.;Initial Catalog=AdventureWorksLT2012;Integrated Security=SSPI;MultipleActiveResultSets=True;";
-        
         static void Main(string[] args)
         {
             try
             {
-                //Just to Complicate Testing 
                 TaskCompletionSource<object> tcs = new TaskCompletionSource<object>();
                 int cnt = 1;
                 Task.Run(async () =>
                 {
-                    var task = DbConnectionScopeTest.Start(connectionString);
+                    var task = DbConnectionScopeTest.Start();
                     await task;
                     var res = Interlocked.Decrement(ref cnt);
                     if (res == 0)
