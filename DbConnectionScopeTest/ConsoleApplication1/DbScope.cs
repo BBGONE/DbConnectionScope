@@ -7,35 +7,44 @@ using System.Transactions;
 
 namespace Bell.PPS.Database.Shared
 {
-    public class UnitOfWork : IDisposable
+    public class DbScope : IDisposable
     {
         private TransactionScope _tranScope;
         private DbConnectionScope _connScope;
         private bool _disposed;
 
-        public UnitOfWork() :
-            this(TransactionScopeOption.Required, IsolationLevel.ReadCommitted, TimeSpan.FromSeconds(30))
+        public DbScope() :
+            this(TransactionScopeOption.Required, IsolationLevel.Serializable, TimeSpan.FromSeconds(30))
         {
         }
 
-        public UnitOfWork(TransactionScopeOption option) :
-            this(option, IsolationLevel.ReadCommitted, TimeSpan.FromSeconds(30))
+        public DbScope(TransactionScopeOption option) :
+            this(option, IsolationLevel.Serializable, TimeSpan.FromSeconds(30))
         {
         }
 
-        public UnitOfWork(TransactionScopeOption option, IsolationLevel isolationLevel):
+        public DbScope(TransactionScopeOption option, IsolationLevel isolationLevel):
             this(option, isolationLevel, TimeSpan.FromSeconds(30))
         {
         }
 
-        public UnitOfWork(TransactionScopeOption option, IsolationLevel isolationLevel, TimeSpan timeOut)
+        public DbScope(TransactionScopeOption option, TimeSpan timeOut) :
+            this(option, IsolationLevel.Serializable, timeOut)
+        {
+        }
+
+        public DbScope(TimeSpan timeOut) :
+           this(TransactionScopeOption.Required, IsolationLevel.Serializable, timeOut)
+        {
+        }
+        public DbScope(TransactionScopeOption option, IsolationLevel isolationLevel, TimeSpan timeOut)
         {
             _disposed = true;
             if (option != TransactionScopeOption.Suppress )
             {
                 TransactionOptions tranOp = new TransactionOptions() { IsolationLevel = isolationLevel, Timeout = timeOut };
                 _tranScope = new TransactionScope(option, tranOp, TransactionScopeAsyncFlowOption.Enabled);
-                _connScope = new DbConnectionScope(DbConnectionScopeOption.Required);
+                _connScope = new DbConnectionScope(option == TransactionScopeOption.RequiresNew? DbConnectionScopeOption.RequiresNew: DbConnectionScopeOption.Required);
             }
             else
             {
@@ -45,7 +54,7 @@ namespace Bell.PPS.Database.Shared
             _disposed = false;
         }
 
-        ~UnitOfWork()
+        ~DbScope()
         {
             Dispose(false);
         }

@@ -24,16 +24,14 @@ namespace ConsoleApplication1
             try
             {
                 //The Test for getting only completely open connections (not in intermediate state like Connecting)
-                using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Required, TransactionScopeAsyncFlowOption.Enabled))
-                using (DbConnectionScope scope = new DbConnectionScope(DbConnectionScopeOption.Required))
+                using (DbScope dbScope = new DbScope())
                 {
                     Task[] tasks = { CheckOpenConnectionState(true), CheckOpenConnectionState(true), CheckOpenConnectionState(false), CheckOpenConnectionState(false) };
                     await Task.WhenAll(tasks).ConfigureAwait(false);
-                    transactionScope.Complete();
+                    dbScope.Complete();
                 }
 
-                using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Suppress, TransactionScopeAsyncFlowOption.Enabled))
-                using (DbConnectionScope scope = new DbConnectionScope(DbConnectionScopeOption.Required))
+                using (DbScope dbScope = new DbScope(TransactionScopeOption.Suppress))
                 {
                     var topConnection = await ConnectionManager.GetSqlConnectionAsync();
 
@@ -41,7 +39,7 @@ namespace ConsoleApplication1
                     await Task.WhenAll(Enumerable.Range(1, 3).Select(i => FirstAsync(i, 100 * i, topConnection)));
                     Console.WriteLine("Ending On Thread: {0}", Thread.CurrentThread.ManagedThreadId);
                     Console.WriteLine("Before Scope End: DbConnectionScope.GetScopeStoreCount()== {0}", DbConnectionScope.GetScopeStoreCount());
-                    transactionScope.Complete();
+                    dbScope.Complete();
                 }
             }
             catch (AggregateException ex)
@@ -79,11 +77,10 @@ namespace ConsoleApplication1
         {
             await Task.Run(async () =>
             {
-                using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Required, TransactionScopeAsyncFlowOption.Enabled))
-                using (DbConnectionScope scope = new DbConnectionScope(DbConnectionScopeOption.Required))
+                using (DbScope dbScope = new DbScope(TransactionScopeOption.RequiresNew))
                 {
                     await WaitAndWriteAsync(0, state, topConnection);
-                    transactionScope.Complete();
+                    dbScope.Complete();
                 }
             });
         }
@@ -92,7 +89,7 @@ namespace ConsoleApplication1
         {
             try
             {
-                using (UnitOfWork unitOfWork = new UnitOfWork())
+                using (DbScope dbScope = new DbScope())
                 {
                     byte[] bytes = null;
                     Task[] tasks1 = { CPU_TASK(), WaitAndWriteAsync(0, "firstTask", topConnection) };
@@ -100,7 +97,7 @@ namespace ConsoleApplication1
                     bytes = (tasks1[0] as Task<byte[]>).Result;
                     var executedOnConnection = (tasks1[1] as Task<SqlConnection>).Result;
 
-                    using (UnitOfWork unitOfWork1 = new UnitOfWork())
+                    using (DbScope dbScope1 = new DbScope())
                     {
                         Task[] tasks2 = { WaitAndWriteAsync(0, "tranTask1", topConnection), 
                                      WaitAndWriteAsync(0, "tranTask2", topConnection), 
@@ -116,13 +113,13 @@ namespace ConsoleApplication1
                         Console.WriteLine("Reusing 3 connections result: {0}, state: {1}", Object.ReferenceEquals(conn1, conn2) && Object.ReferenceEquals(conn1, executedOnConnection), "Task1 and Task2 and firstTask");
                         Console.WriteLine();
 
-                        using (UnitOfWork unitOfWork2 = new UnitOfWork())
+                        using (DbScope dbScope2 = new DbScope())
                         {
                             await WaitAndWriteAsync(0, "lastTask", topConnection).ConfigureAwait(false);
-                            unitOfWork2.Complete();
+                            dbScope2.Complete();
                         }
 
-                        using (UnitOfWork unitOfWork3 = new UnitOfWork(TransactionScopeOption.RequiresNew))
+                        using (DbScope dbScope3 = new DbScope(TransactionScopeOption.RequiresNew))
                         {
                             bool isEqual = false;
                             var localConn1 = await ConnectionManager.GetSqlConnectionAsync();
@@ -132,13 +129,13 @@ namespace ConsoleApplication1
                             Console.WriteLine();
                             Console.WriteLine("Reusing connection in the same scope Passed: {0}", isEqual);
                             Console.WriteLine();
-                            unitOfWork3.Complete();
+                            dbScope3.Complete();
                         }
                        
-                        unitOfWork1.Complete();
+                        dbScope1.Complete();
                     }
 
-                    unitOfWork.Complete();
+                    dbScope.Complete();
                 }
             }
             catch (AggregateException ex)
@@ -214,24 +211,22 @@ namespace ConsoleApplication1
             {
                 int nextLevel = level + 1;
                 //Recursive CALL
-                using (UnitOfWork unitOfWork1 = new UnitOfWork())
+                using (DbScope dbScope1 = new DbScope())
                 {
                     var executedOnConnection1 = await WaitAndWriteAsync(nextLevel, state + "-transRecurse:" + nextLevel, topConnection);
-                    unitOfWork1.Complete();
+                    dbScope1.Complete();
                 }
 
-                using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Suppress, TransactionScopeAsyncFlowOption.Enabled))
-                using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.Required))
+           
+                using (DbScope dbScope3 = new DbScope(TransactionScopeOption.Suppress))
                 {
-                    var executedOnConnection2 = await WaitAndWriteAsync(nextLevel, state + "-recurse1:" + nextLevel, topConnection);
-                    transactionScope.Complete();
-                }
-
-                using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Suppress, TransactionScopeAsyncFlowOption.Enabled))
-                using (DbConnectionScope scope2 = new DbConnectionScope(DbConnectionScopeOption.RequiresNew))
-                {
+                    using (DbScope dbScope2 = new DbScope(TransactionScopeOption.Suppress))
+                    {
+                        var executedOnConnection2 = await WaitAndWriteAsync(nextLevel, state + "-recurse1:" + nextLevel, topConnection);
+                        dbScope2.Complete();
+                    }
                     var executedOnConnection3 = await WaitAndWriteAsync(nextLevel, state + "-recurse2:" + nextLevel, topConnection);
-                    transactionScope.Complete();
+                    dbScope3.Complete();
                 } 
             }
             return executedOnConnection;

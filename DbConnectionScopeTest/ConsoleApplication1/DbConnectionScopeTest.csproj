@@ -52,7 +52,7 @@
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="DbConnectionScopeTest.cs" />
-    <Compile Include="UnitOfWork.cs" />
+    <Compile Include="DbScope.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />
