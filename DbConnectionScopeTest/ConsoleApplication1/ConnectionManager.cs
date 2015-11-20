@@ -33,7 +33,7 @@ namespace Bell.PPS.Database.Shared
             return await DbConnectionScope.GetOpenConnectionAsync<SqlConnection>(DbConnectionFactory.Instance, CONNECTION_STRING_NAME);
         }
 
-        public static SqlConnection GetConnection(string dbname)
+        public static SqlConnection GetSqlConnection(string dbname)
         {
             return DbConnectionScope.GetOpenConnection<SqlConnection>(_dbNameFactory.Value, dbname);
         }
