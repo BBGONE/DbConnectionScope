@@ -10,12 +10,8 @@ namespace ConsoleApplication1
 {
     class DbConnectionScopeTest
     {
-        private static IDbConnectionFactory connectionFactory =  new DbConnectionFactory();
-        private static string connectionName = "DbConnectionString";
-
         public static async Task Start()
         {
-            connectionFactory = new DbConnectionFactory();
             /*
             using (var afc = ExecutionContext.SuppressFlow())
             {
@@ -39,7 +35,7 @@ namespace ConsoleApplication1
                 using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Suppress, TransactionScopeAsyncFlowOption.Enabled))
                 using (DbConnectionScope scope = new DbConnectionScope(DbConnectionScopeOption.Required))
                 {
-                    var topConnection = await GetSqlConnectionAsync();
+                    var topConnection = await ConnectionManager.GetSqlConnectionAsync();
 
                     Console.WriteLine("Starting On Thread: {0}", Thread.CurrentThread.ManagedThreadId);
                     await Task.WhenAll(Enumerable.Range(1, 3).Select(i => FirstAsync(i, 100 * i, topConnection)));
@@ -133,8 +129,8 @@ namespace ConsoleApplication1
                         using (DbConnectionScope scope3 = new DbConnectionScope(DbConnectionScopeOption.RequiresNew))
                         {
                             bool isEqual = false;
-                            var localConn1 = await GetSqlConnectionAsync();
-                            var localConn2 = await GetSqlConnectionAsync();
+                            var localConn1 = await ConnectionManager.GetSqlConnectionAsync();
+                            var localConn2 = await ConnectionManager.GetSqlConnectionAsync();
                             isEqual = Object.ReferenceEquals(localConn1, localConn2);
        
                             Console.WriteLine();
@@ -170,13 +166,13 @@ namespace ConsoleApplication1
             bool res = false;
             if (isAsync)
             {
-                SqlConnection conn = await GetSqlConnectionAsync();
+                SqlConnection conn = await ConnectionManager.GetSqlConnectionAsync();
                 res = conn.State == System.Data.ConnectionState.Open;
                 Console.WriteLine("Get Open Connection Result: {0}, isAsync: {1}, {2}", res, isAsync, conn.State);
             }
             else
             {
-                SqlConnection conn = GetSqlConnection();
+                SqlConnection conn = ConnectionManager.GetSqlConnection();
                 res = conn.State == System.Data.ConnectionState.Open;
                 Console.WriteLine("Get Open Connection Result: {0}, isAsync: {1}, {2}", res, isAsync, conn.State);
             }
@@ -186,7 +182,7 @@ namespace ConsoleApplication1
         {
             string sql = "WAITFOR DELAY '00:00:00.25';select transaction_id from sys.dm_tran_current_transaction";
             SqlCommand cmd = new SqlCommand(sql);
-            var localConn = await GetSqlConnectionAsync();
+            var localConn = await ConnectionManager.GetSqlConnectionAsync();
             cmd.Connection = localConn;
 
             if (state.StartsWith("lastTask-recurse"))
@@ -244,36 +240,6 @@ namespace ConsoleApplication1
                 } 
             }
             return executedOnConnection;
-        }
-
-        public static SqlConnection GetSqlConnection()
-        {
-            SqlConnection cn = null;
-            try
-            {
-                cn = DbConnectionScope.GetOpenConnection<SqlConnection>(connectionFactory, connectionName);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-                throw;
-            }
-            return cn;
-        }
-
-        public static async Task<SqlConnection> GetSqlConnectionAsync()
-        {
-            SqlConnection cn = null;
-            try
-            {
-                cn = await DbConnectionScope.GetOpenConnectionAsync<SqlConnection>(connectionFactory, connectionName);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-                throw;
-            }
-            return cn;
         }
     }
 }

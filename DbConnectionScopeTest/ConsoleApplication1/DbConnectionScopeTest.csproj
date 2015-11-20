@@ -44,8 +44,10 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ConnectionManager.cs" />
     <Compile Include="DbConnectionFactory.cs" />
     <Compile Include="DbConnectionScope.cs" />
+    <Compile Include="DbNameConnectionFactory.cs" />
     <Compile Include="IDbConnectionFactory.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
