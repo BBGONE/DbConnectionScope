@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Bell.PPS.Database.Shared;
 using System.Data.SqlClient;
 using System.Transactions;
+using System.Diagnostics;
 
 namespace ConsoleApplication1
 {
@@ -58,24 +59,34 @@ namespace ConsoleApplication1
             Console.WriteLine("After Scope End: DbConnectionScope.GetScopeStoreCount()== {0}", DbConnectionScope.GetScopeStoreCount());
         }
 
-        private static async Task<byte[]> CPU_TASK()
+        private static Task<byte[]> CPU_TASK()
         {
-            var bytes = await Task.Run(() =>
+            Stopwatch sw = new Stopwatch();
+            sw.Start();
+            var task = Task.Run(() =>
             {
                 byte[] res = new byte[0];
-                for (int i = 0; i < 100000; ++i)
+                for (int i = 0; i < 200000; ++i)
                 {
                     var str = Guid.NewGuid().ToString();
                     res = System.Text.Encoding.UTF8.GetBytes(str);
                 }
                 return res;
             });
-            return bytes;
+            task.ContinueWith((antecedent) => {
+                sw.Stop();
+                Console.WriteLine("CPU_TASK executed for {0} milliseconds", sw.ElapsedMilliseconds);
+                if (antecedent.IsFaulted)
+                    Console.WriteLine("CPU_TASK ended with error: {0}", antecedent.Exception.Message);
+            });
+            return task;
         }
 
-        private static async Task CONNECTION_TASK(string state, SqlConnection topConnection)
+        private static Task CONNECTION_TASK(string state, SqlConnection topConnection)
         {
-            await Task.Run(async () =>
+            Stopwatch sw = new Stopwatch();
+            sw.Start();
+            var task = Task.Run(async () =>
             {
                 using (DbScope dbScope = new DbScope(TransactionScopeOption.RequiresNew))
                 {
@@ -83,6 +94,13 @@ namespace ConsoleApplication1
                     dbScope.Complete();
                 }
             });
+            task.ContinueWith((antecedent) => {
+                sw.Stop();
+                Console.WriteLine("CONNECTION_TASK {0} executed for {1} milliseconds", state, sw.ElapsedMilliseconds);
+                if (antecedent.IsFaulted)
+                    Console.WriteLine("CONNECTION_TASK {0} ended with error: {1}",state, antecedent.Exception.Message);
+            });
+            return task;
         }
 
         static async Task FirstAsync(int num, int wait, SqlConnection topConnection)
