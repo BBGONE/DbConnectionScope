@@ -22,4 +22,4 @@ a new transaction and a new connection.
 <br/><br/>
 I introduced a new class DbScope which combines the TransactionScope and DbConnectionScope in one vial. It is easier to use than those two classes.
 <br/><br/>
-LICENCE: Use it as you like!
+LICENSE: Use it as you like!
