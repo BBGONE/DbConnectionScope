@@ -2,12 +2,11 @@ using System;
 using System.Collections.Concurrent;
 using System.Data;
 using System.Data.Common;
-using System.Transactions;
-using System.Runtime.Remoting.Messaging;
-using System.Threading.Tasks;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
+using System.Threading.Tasks;
+using System.Transactions;
 
 namespace Bell.PPS.Database.Shared
 {
@@ -27,74 +26,33 @@ namespace Bell.PPS.Database.Shared
     /// </summary>
     public sealed class DbConnectionScope : IDisposable
     {
-        private static readonly string SLOT_KEY = Guid.NewGuid().ToString();
-#if TEST
-        //Just for Testing Purposes
-        public static int GetScopeStoreCount() {
-            return __scopeStore.Count;
-        }
-#endif
-
-#region class fields
-        private static ConcurrentDictionary<Guid, WeakReference<DbConnectionScope>> __scopeStore = new ConcurrentDictionary<Guid, WeakReference<DbConnectionScope>>();
-        private static DbConnectionScope __currentScope
+        private static readonly AsyncLocal<DbConnectionScope> _asyncLocal = new AsyncLocal<DbConnectionScope>();
+        private static DbConnectionScope _currentScope
         {
             get
             {
-                object res = CallContext.LogicalGetData(SLOT_KEY);
-                if (res != null)
-                {
-                    Guid scopeID = (Guid)res;
-                    WeakReference<DbConnectionScope> wref;
-                    DbConnectionScope scope;
-                    if (__scopeStore.TryGetValue(scopeID, out wref))
-                    {
-                        if (wref.TryGetTarget(out scope))
-                            return scope;
-                        else
-                            return null;
-                    }
-                    else
-                    {
-                        return null;
-                    }
-                }
-                return null;
+                return _asyncLocal.Value;
             }
             set
             {
-                Guid? id = value == null ? (Guid?)null : value.UNIQUE_ID;
-                if (id.HasValue)
-                {
-                    CallContext.LogicalSetData(SLOT_KEY, id);
-                }
-                else
-                    CallContext.FreeNamedDataSlot(SLOT_KEY);
+                _asyncLocal.Value = value;
             }
         }
 
         private static ConditionalWeakTable<DbConnection, Task<DbConnection>> __openAsyncTasks =  new ConditionalWeakTable<DbConnection, Task<DbConnection>>();
-#endregion
 
-#region instance fields
-        internal readonly Guid UNIQUE_ID = Guid.NewGuid();
         private readonly object SyncRoot = new object();
         private DbConnectionScope _outerScope;
         private string _transId;
         private DbConnectionScopeOption _option;
         private Lazy<ConcurrentDictionary<string, DbConnection>> _connections;
         private bool _isDisposed;
-#endregion
 
-#region class methods and properties
-        /// <summary>
-        /// Obtain the currently active connection scope
-        /// </summary>
         public static DbConnectionScope Current
         {
             get
             {
-                return __currentScope;
+                return _currentScope;
             }
         }
 
@@ -123,21 +81,13 @@ namespace Bell.PPS.Database.Shared
                 return currTransId;
             }
         }
-#endregion
 
-#region constructor annd destructor
-        /// <summary>
-        /// Default Constructor
-        /// </summary>
         public DbConnectionScope()
             : this(DbConnectionScopeOption.Required)
         {
         }
 
-        /// <summary>
-        /// Constructor with options
-        /// </summary>
-        /// <param name="option">Option for how to modify Current during constructor</param>
+     
         public DbConnectionScope(DbConnectionScopeOption option)
         {
             _isDisposed = true;  // short circuit Dispose until we're properly set up
@@ -145,7 +95,7 @@ namespace Bell.PPS.Database.Shared
             this._option = option;
             this._outerScope = null;
 
-            DbConnectionScope outerScope = __currentScope;
+            DbConnectionScope outerScope = _currentScope;
             bool isAllocateOk = (outerScope == null || outerScope._transId != this._transId);
             if (option == DbConnectionScopeOption.RequiresNew ||
                (option == DbConnectionScopeOption.Required && isAllocateOk))
@@ -154,12 +104,9 @@ namespace Bell.PPS.Database.Shared
                 _connections = new Lazy<ConcurrentDictionary<string,DbConnection>>(()=> new ConcurrentDictionary<string,DbConnection>(), true);
 
                 // Devnote:  Order of initial assignment is important in cases of failure!
-                if (__scopeStore.TryAdd(this.UNIQUE_ID, new WeakReference<DbConnectionScope>(this)))
-                {
-                    _outerScope = outerScope;
-                    _isDisposed = false;
-                    __currentScope = this;
-                }
+                _outerScope = outerScope;
+                _isDisposed = false;
+                _currentScope = this;
             }
         }
 
@@ -167,9 +114,7 @@ namespace Bell.PPS.Database.Shared
         {
             Dispose(false);
         }
-#endregion
 
-#region public instance methods and properties
         public void Dispose()
         {
             Dispose(true);
@@ -215,9 +160,7 @@ namespace Bell.PPS.Database.Shared
         {
             get { return _option; }
         }
-#endregion
 
-#region private methods and properties
         private DbConnection GetOpenConnectionInternal(IDbConnectionFactory factory, string connectionName, int level)
         {
             if (level > 1)
@@ -464,9 +407,7 @@ namespace Bell.PPS.Database.Shared
 
                     try
                     {
-                        WeakReference<DbConnectionScope> tmp;
-                        __scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
-                        __currentScope = outerScope;
+                        _currentScope = outerScope;
                     }
                     finally
                     {
@@ -488,11 +429,8 @@ namespace Bell.PPS.Database.Shared
             }
             else
             {
-                WeakReference<DbConnectionScope> tmp;
-                __scopeStore.TryRemove(this.UNIQUE_ID, out tmp);
                 _isDisposed = true;
             }
         }
-#endregion
     }
 }

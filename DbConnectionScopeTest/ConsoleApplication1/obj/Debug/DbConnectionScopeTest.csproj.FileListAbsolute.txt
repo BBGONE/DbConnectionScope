@@ -1,0 +1,7 @@
+C:\DATA\NEW_SVM\DbConnectionScope\DbConnectionScopeTest\ConsoleApplication1\obj\Debug\DbConnectionScopeTest.csprojAssemblyReference.cache
+C:\DATA\NEW_SVM\DbConnectionScope\DbConnectionScopeTest\ConsoleApplication1\obj\Debug\DbConnectionScopeTest.csproj.CoreCompileInputs.cache
+C:\DATA\NEW_SVM\DbConnectionScope\DbConnectionScopeTest\ConsoleApplication1\bin\Debug\ConsoleApplication1.exe.config
+C:\DATA\NEW_SVM\DbConnectionScope\DbConnectionScopeTest\ConsoleApplication1\bin\Debug\ConsoleApplication1.exe
+C:\DATA\NEW_SVM\DbConnectionScope\DbConnectionScopeTest\ConsoleApplication1\bin\Debug\ConsoleApplication1.pdb
+C:\DATA\NEW_SVM\DbConnectionScope\DbConnectionScopeTest\ConsoleApplication1\obj\Debug\ConsoleApplication1.exe
+C:\DATA\NEW_SVM\DbConnectionScope\DbConnectionScopeTest\ConsoleApplication1\obj\Debug\ConsoleApplication1.pdb

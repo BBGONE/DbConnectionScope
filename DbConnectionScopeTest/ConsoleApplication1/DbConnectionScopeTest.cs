@@ -24,7 +24,7 @@ namespace ConsoleApplication1
             */
             try
             {
-                //The Test for getting only completely open connections (not in intermediate state like Connecting)
+                // The Test for getting only completely open connections (not in intermediate state like Connecting)
                 using (DbScope dbScope = new DbScope())
                 {
                     Task[] tasks = { CheckOpenConnectionState(true), CheckOpenConnectionState(true), CheckOpenConnectionState(false), CheckOpenConnectionState(false) };
@@ -39,7 +39,6 @@ namespace ConsoleApplication1
                     Console.WriteLine("Starting On Thread: {0}", Thread.CurrentThread.ManagedThreadId);
                     await Task.WhenAll(Enumerable.Range(1, 3).Select(i => FirstAsync(i, 100 * i, topConnection)));
                     Console.WriteLine("Ending On Thread: {0}", Thread.CurrentThread.ManagedThreadId);
-                    Console.WriteLine("Before Scope End: DbConnectionScope.GetScopeStoreCount()== {0}", DbConnectionScope.GetScopeStoreCount());
                     dbScope.Complete();
                 }
             }
@@ -56,7 +55,6 @@ namespace ConsoleApplication1
                 Console.WriteLine();
                 Console.WriteLine(ex.Message);
             }
-            Console.WriteLine("After Scope End: DbConnectionScope.GetScopeStoreCount()== {0}", DbConnectionScope.GetScopeStoreCount());
         }
 
         private static Task<byte[]> CPU_TASK()

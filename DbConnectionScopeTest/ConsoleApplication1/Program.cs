@@ -28,7 +28,6 @@ namespace ConsoleApplication1
                     Console.WriteLine("Elapsed time (milliseconds) {0}", sw.ElapsedMilliseconds);
                 });
                 tcs.Task.Wait(60000);
-                Console.WriteLine("After End: DbConnectionScope.GetScopeStoreCount()== {0}", DbConnectionScope.GetScopeStoreCount());
             }
             catch (AggregateException aex)
             {
